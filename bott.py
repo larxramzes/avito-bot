@@ -13,10 +13,19 @@ from aiohttp import web
 TOKEN = "8993905772:AAF8P_kD-rXCVKF1pLwe-0CA4SbFXrwvog4"
 MONITORED_URL = "https://m.avito.ru/kazan/bytovaya_elektronika?s=104"
 
+# Улучшенные заголовки под настоящий мобильный браузер Сафари (iPhone)
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
-    "Accept-Language": "ru-RU,ru;q=0.9",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+    "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Cache-Control": "max-age=0"
 }
 
 WHITELIST_KEYWORDS = [
@@ -125,10 +134,15 @@ def is_super_profitable(title: str, price_text: str) -> bool:
 
 def fetch_avito_requests():
     try:
-        response = requests.get(MONITORED_URL, headers=HEADERS, timeout=10)
-        if response.status_code != 200: return []
+        session = requests.Session()
+        response = session.get(MONITORED_URL, headers=HEADERS, timeout=12)
+        if response.status_code != 200: 
+            return []
+        
         soup = BeautifulSoup(response.text, "html.parser")
         ads = []
+        
+        # Универсальный поиск ссылок на объявления мобильной версии Авито
         for link in soup.find_all("a", href=True):
             href = link.get("href")
             match = re.search(r'_(\d+)$', href.split("?")[0])
@@ -136,14 +150,19 @@ def fetch_avito_requests():
                 ad_id = match.group(1)
                 title_text = link.get("title", "") or link.text.strip()
                 if len(title_text) < 4: continue
+                
                 price = "0 ₽"
                 parent = link.find_parent("div")
                 if parent:
                     pm = re.search(r'(\d+)[₽]', parent.text.replace("\xa0", "").replace(" ", ""))
                     if pm: price = pm.group(1) + " ₽"
-                ads.append({"id": ad_id, "title": title_text, "price": price, "url": href if href.startswith("http") else f"https://www.avito.ru{href}"})
+                    
+                full_url = href if href.startswith("http") else f"https://m.avito.ru{href}"
+                ads.append({"id": ad_id, "title": title_text, "price": price, "url": full_url})
+                
         return list({ad["id"]: ad for ad in ads}.values())
-    except Exception:
+    except Exception as e:
+        print(f"Error fetching: {e}")
         return []
 
 async def run_check(target_chat_id=None):
@@ -174,13 +193,13 @@ async def background_monitor():
         try:
             if my_chat_id: await run_check(my_chat_id)
         except: pass
-        await asyncio.sleep(15)
+        await asyncio.sleep(20)
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     global my_chat_id
     my_chat_id = message.chat.id
-    await message.answer(f"👋 Привет! Облачный бот запущен ({my_chat_id}). Напиши /check! ⚡️")
+    await message.answer(f"👋 Привет! Бот с обновленной маскировкой запущен ({my_chat_id}). Напиши /check! ⚡️")
 
 @dp.message(Command("check"))
 async def cmd_check(message: types.Message):
@@ -189,7 +208,6 @@ async def cmd_check(message: types.Message):
     total, found = await run_check(my_chat_id)
     await message.answer(f"✅ Проверено лотов: {total}. Отобрано топ-вариантов: {found}. 🌸")
 
-# Вспомогательный веб-сервер для поддержания активности на Render
 async def handle(request):
     return web.Response(text="Bot is running!")
 
