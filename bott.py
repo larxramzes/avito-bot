@@ -8,11 +8,16 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiohttp import web
 
+# --- НАСТРОЙКИ ---
 TOKEN = "8993905772:AAF8P_kD-rXCVKF1pLwe-0CA4SbFXrwvog4"
-TARGET_URL = "https://m.avito.ru/kazan/bytovaya_elektronika?s=104"
+MONITORED_URL = "https://m.avito.ru/kazan/bytovaya_elektronika?s=104"
 
-# Используем публичный прокси-сервер для обхода блокировок дата-центров
-PROXY_API = f"https://api.allorigins.win/get?url={requests.utils.quote(TARGET_URL)}"
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Connection": "keep-alive"
+}
 
 WHITELIST_KEYWORDS = [
     "iphone", "айфон", "ps5", "playstation", "xbox", "nintendo", "steam deck",
@@ -68,16 +73,11 @@ def is_super_profitable(title: str, price_text: str) -> bool:
 
 def fetch_avito_requests():
     try:
-        response = requests.get(PROXY_API, timeout=20)
+        response = requests.get(MONITORED_URL, headers=HEADERS, timeout=15)
         if response.status_code != 200:
             return []
             
-        data = response.json()
-        html_content = data.get("contents", "")
-        if not html_content:
-            return []
-            
-        soup = BeautifulSoup(html_content, "html.parser")
+        soup = BeautifulSoup(response.text, "html.parser")
         ads = []
         
         for link in soup.find_all("a", href=True):
@@ -97,11 +97,9 @@ def fetch_avito_requests():
                 full_url = href if href.startswith("http") else f"https://m.avito.ru{href}"
                 ads.append({"id": ad_id, "title": title_text, "price": price, "url": full_url})
                 
-        unique_ads = list({ad["id"]: ad for ad in ads}.values())
-        print(f"Fetched ads count: {len(unique_ads)}")
-        return unique_ads
+        return list({ad["id"]: ad for ad in ads}.values())
     except Exception as e:
-        print(f"Error fetching via proxy API: {e}")
+        print(f"Error fetching: {e}")
         return []
 
 async def run_check(target_chat_id=None):
@@ -138,7 +136,7 @@ async def background_monitor():
 async def cmd_start(message: types.Message):
     global my_chat_id
     my_chat_id = message.chat.id
-    await message.answer(f"👋 Бот через API-шлюз запущен! ID: {my_chat_id}. Нажми /check ⚡️")
+    await message.answer(f"👋 Бот запущен! ID: {my_chat_id}. Нажми /check ⚡️")
 
 @dp.message(Command("check"))
 async def cmd_check(message: types.Message):
