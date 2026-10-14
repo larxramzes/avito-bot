@@ -21,13 +21,8 @@ if not TOKEN:
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# Список рабочих прокси для ротации и обхода блокировок
-PROXIES = [
-    "http://190.61.88.147:8080",
-    "http://181.215.115.8:8080",
-    "http://200.105.215.22:80",
-    "socks5://51.158.118.64:1080",
-]
+# Твой купленный приватный прокси! 
+PROXY_URL = "http://RjWUWQ:M516y3@147.45.82.76:8000"
 
 def get_main_menu():
     builder = InlineKeyboardBuilder()
@@ -40,7 +35,7 @@ def get_main_menu():
 @dp.message(F.text == "/start")
 async def cmd_start(message: Message):
     welcome_text = (
-        "Привет! 🌸 Я твой бот-парсер Avito (Kazan Tech Parser) с активным пулом прокси.\n\n"
+        "Привет! 🌸 Я твой бот-парсер Avito (Kazan Tech Parser) с приватным прокси.\n\n"
         "🤖 **Что я умею:**\n"
         "• **Чистовик:** пропускаю только идеальные лоты без дефектов с посчитанной маржой от дна рынка.\n"
         "• **Радар (Карантин):** нахожу всё остальное ниже рынка и подсвечиваю скрытые косяки продавцов.\n\n"
@@ -48,7 +43,7 @@ async def cmd_start(message: Message):
     )
     await message.answer(welcome_text, reply_markup=get_main_menu())
 
-# Функция парсинга через мобильное API Авито с ротацией прокси
+# Функция парсинга через мобильное API Авито с твоим прокси
 async def fetch_avito_listings():
     url = "https://m.avito.ru/api/1/items?key=serp&locationId=88&categoryId=110&q=iphone"
     headers = {
@@ -58,38 +53,36 @@ async def fetch_avito_listings():
     }
     
     listings = []
-    async with aiohttp.ClientSession() as session:
-        for proxy in PROXIES:
-            try:
-                async with session.get(url, headers=headers, proxy=proxy, timeout=6) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        items = data.get("items", [])[:5]
-                        for item in items:
-                            title = item.get("title", "Без названия")
-                            price = item.get("priceDetailed", {}).get("string", "Цена не указана")
-                            item_id = item.get("id")
-                            link = f"https://www.avito.ru/kazan/{item.get('uri', item_id)}" if item_id else "https://www.avito.ru"
-                            listings.append({"title": title, "price": price, "link": link})
-                        if listings:
-                            break # Если успешно собрали данные через прокси — выходим из цикла
-            except Exception as e:
-                logging.error(f"Прокси {proxy} не ответил: {e}")
-                continue
-                
+    try:
+        async with aiohttp.ClientSession() as session:
+            # Делаем запрос через твой платный прокси
+            async with session.get(url, headers=headers, proxy=PROXY_URL, timeout=15) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    items = data.get("items", [])[:5]
+                    for item in items:
+                        title = item.get("title", "Без названия")
+                        price = item.get("priceDetailed", {}).get("string", "Цена не указана")
+                        item_id = item.get("id")
+                        link = f"https://www.avito.ru/kazan/{item.get('uri', item_id)}" if item_id else "https://www.avito.ru"
+                        listings.append({"title": title, "price": price, "link": link})
+    except Exception as e:
+        logging.error(f"Ошибка запроса через приватный прокси: {e}")
+        
     return listings
 
 @dp.callback_query(F.data == "run_parse")
 async def process_parsing(callback: CallbackQuery):
-    await callback.message.answer("🔍 Перебираю прокси и запускаю парсинг свежих объявлений с Авито (Казань)... Погоди секунду! ✨")
+    await callback.message.answer("🔍 Запускаю парсинг свежих объявлений с Авито через твой приватный прокси (Казань)... Погоди секунду! ✨")
     listings = await fetch_avito_listings()
     
     if not listings:
         await callback.message.answer(
-            "⚠️ Текущие публичные прокси временно недоступны. Переключаюсь на штатный демонстрационный режим:",
+            "⚠️ Не удалось загрузить объявления.\n\n"
+            "А пока демо-режим:",
             reply_markup=get_main_menu()
         )
-        # Выдаем демо-пример при сбое прокси
+        # Выдаем демо-пример при сбое
         await callback.message.answer(
             "📱 **Apple iPhone 13 128GB**\n💰 Цена: 38 000 ₽\n🔗 [Ссылка на объявление](https://www.avito.ru/kazan)",
             reply_markup=get_main_menu(),
