@@ -40,7 +40,7 @@ async def cmd_start(message: Message):
     )
     await message.answer(welcome_text, reply_markup=get_main_menu())
 
-# Функция реального парсинга через мобильное API Авито (Казань, категория телефонов/смартфонов)
+# Функция парсинга через мобильное API Авито
 async def fetch_avito_listings():
     url = "https://m.avito.ru/api/1/items?key=serp&locationId=88&categoryId=110&q=iphone"
     headers = {
@@ -55,13 +55,12 @@ async def fetch_avito_listings():
             async with session.get(url, headers=headers, timeout=10) as response:
                 if response.status == 200:
                     data = await response.json()
-                    items = data.get("items", [])[:5] # Берем первые 5 объявлений
+                    items = data.get("items", [])[:5]
                     for item in items:
                         title = item.get("title", "Без названия")
                         price = item.get("priceDetailed", {}).get("string", "Цена не указана")
                         item_id = item.get("id")
                         link = f"https://www.avito.ru/kazan/{item.get('uri', item_id)}" if item_id else "https://www.avito.ru"
-                        
                         listings.append({"title": title, "price": price, "link": link})
     except Exception as e:
         logging.error(f"Ошибка API парсинга: {e}")
@@ -95,4 +94,38 @@ async def process_chistovik(callback: CallbackQuery):
         "💰 Цена: 52 000 ₽ (Дно рынка: 58 000 ₽)\n"
         "📈 **Чистая маржа:** +6 000 ₽\n"
         "🛠 Состояние: Идеальное, без дефектов, АКБ 98%.\n\n"
-        "👉 *Статус:* Лот пропущен в Чистовик
+        "👉 *Статус:* Лот пропущен в Чистовик!",
+        reply_markup=get_main_menu()
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data == "mode_radar")
+async def process_radar(callback: CallbackQuery):
+    await callback.message.answer(
+        "⚡ **Режим: Радар (Карантин)**\n\n"
+        "⚠️ *Пример лота с нюансом:*\n"
+        "💻 **MacBook Air M1**\n"
+        "💰 Цена: 45 000 ₽ (Ниже рынка)\n"
+        "🤖 **Вердикт:** Забраковано! ⚠️ *Нюанс:* Менялся дисплей.",
+        reply_markup=get_main_menu()
+    )
+    await callback.answer()
+
+async def handle_ping(request):
+    return web.Response(text="Bot is active and running 24/7!")
+
+async def web_server():
+    app = web.Application()
+    app.router.add_get("/", handle_ping)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    await site.start()
+    logging.info(f"Web server started on port {PORT}")
+
+async def main():
+    await web_server()
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
