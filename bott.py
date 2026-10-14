@@ -2,7 +2,6 @@ import os
 import logging
 import asyncio
 import aiohttp
-from bs4 import BeautifulSoup
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, CallbackQuery
@@ -35,52 +34,55 @@ async def cmd_start(message: Message):
     welcome_text = (
         "Привет! 🌸 Я твой бот-парсер Avito (Kazan Tech Parser).\n\n"
         "🤖 **Что я умею:**\n"
-        "• **Чистовик:** пропускаю только идеальные лоты без дефектов с посчитанной маржой от дна рынка[span_1](start_span)[span_1](end_span).\n"
-        "• **Радар (Карантин):** нахожу всё остальное ниже рынка и подсвечиваю скрытые косяки продавцов[span_2](start_span)[span_2](end_span).\n\n"
+        "• **Чистовик:** пропускаю только идеальные лоты без дефектов с посчитанной маржой от дна рынка.\n"
+        "• **Радар (Карантин):** нахожу всё остальное ниже рынка и подсвечиваю скрытые косяки продавцов.\n\n"
         "Выбери нужный раздел в меню ниже:"
     )
     await message.answer(welcome_text, reply_markup=get_main_menu())
 
+# Функция реального парсинга через мобильное API Авито (Казань, категория телефонов/смартфонов)
 async def fetch_avito_listings():
-    url = "https://www.avito.ru/kazan/telefony/smartfony-ASgBAgICAUXg1g4i?q=iphone"
+    url = "https://m.avito.ru/api/1/items?key=serp&locationId=88&categoryId=110&q=iphone"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept-Language": "ru-RU,ru;q=0.9"
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+        "Accept": "application/json",
+        "Referer": "https://m.avito.ru/"
     }
+    
     listings = []
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers, timeout=10) as response:
                 if response.status == 200:
-                    html = await response.text()
-                    soup = BeautifulSoup(html, 'lxml')
-                    items = soup.select('[data-marker="item-iva"]')[:3]
+                    data = await response.json()
+                    items = data.get("items", [])[:5] # Берем первые 5 объявлений
                     for item in items:
-                        title_el = item.select_one('[data-marker="item-title"]')
-                        price_el = item.select_one('[data-marker="item-price"]')
-                        link_el = item.select_one('a[itemprop="url"]')
+                        title = item.get("title", "Без названия")
+                        price = item.get("priceDetailed", {}).get("string", "Цена не указана")
+                        item_id = item.get("id")
+                        link = f"https://www.avito.ru/kazan/{item.get('uri', item_id)}" if item_id else "https://www.avito.ru"
                         
-                        title = title_el.text.strip() if title_el else "Без названия"
-                        price = price_el.text.strip() if price_el else "Цена не указана"
-                        link = "https://www.avito.ru" + link_el['href'] if link_el and link_el.has_attr('href') else "#"
                         listings.append({"title": title, "price": price, "link": link})
     except Exception as e:
-        logging.error(f"Ошибка парсинга: {e}")
+        logging.error(f"Ошибка API парсинга: {e}")
+        
     return listings
 
 @dp.callback_query(F.data == "run_parse")
 async def process_parsing(callback: CallbackQuery):
     await callback.message.answer("🔍 Запускаю парсинг свежих объявлений с Авито (Казань)... Погоди секунду! ✨")
     listings = await fetch_avito_listings()
+    
     if not listings:
         await callback.message.answer(
-            "⚠️ Авито временно защитил страницу от запросов.\n\n"
+            "⚠️ Не удалось получить данные в реальном времени (Авито временно ограничил запросы).\n\n"
             "Но вот пример работы алгоритма в штатном режиме:",
             reply_markup=get_main_menu()
         )
         return
+        
     for item in listings:
-        text = f"📱 **{item['title']}**\n💰 Цена: {item['price']}\n🔗 [Ссылка]({item['link']})"
+        text = f"📱 **{item['title']}**\n💰 Цена: {item['price']}\n🔗 [Ссылка на объявление]({item['link']})"
         await callback.message.answer(text, reply_markup=get_main_menu(), disable_web_page_preview=True)
     await callback.answer()
 
@@ -92,39 +94,5 @@ async def process_chistovik(callback: CallbackQuery):
         "📱 **Apple iPhone 14 Plus 128GB**\n"
         "💰 Цена: 52 000 ₽ (Дно рынка: 58 000 ₽)\n"
         "📈 **Чистая маржа:** +6 000 ₽\n"
-        "🛠 Состояние: Идеальное, без дефектов, АКБ 98%[span_3](start_span)[span_3](end_span).\n\n"
-        "👉 *Статус:* Лот пропущен в Чистовик[span_4](start_span)[span_4](end_span)!",
-        reply_markup=get_main_menu()
-    )
-    await callback.answer()
-
-@dp.callback_query(F.data == "mode_radar")
-async def process_radar(callback: CallbackQuery):
-    await callback.message.answer(
-        "⚡ **Режим: Радар (Карантин)**\n\n"
-        "⚠️ *Пример лота с нюансом:*\n"
-        "💻 **MacBook Air M1**\n"
-        "💰 Цена: 45 000 ₽ (Ниже рынка)\n"
-        "🤖 **Вердикт:** Забраковано! ⚠️ *Нюанс:* Менялся дисплей[span_5](start_span)[span_5](end_span).",
-        reply_markup=get_main_menu()
-    )
-    await callback.answer()
-
-async def handle_ping(request):
-    return web.Response(text="Bot is active and running 24/7!")
-
-async def web_server():
-    app = web.Application()
-    app.router.add_get("/", handle_ping)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", PORT)
-    await site.start()
-    logging.info(f"Web server started on port {PORT}")
-
-async def main():
-    await web_server()
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+        "🛠 Состояние: Идеальное, без дефектов, АКБ 98%.\n\n"
+        "👉 *Статус:* Лот пропущен в Чистовик
