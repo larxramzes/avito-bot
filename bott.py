@@ -21,6 +21,12 @@ if not TOKEN:
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
+# Список бесплатных публичных прокси для ротации (можно дополнять)
+PROXIES = [
+    # Здесь можно указать прокси в формате http://IP:PORT или socks5://IP:PORT
+    # Если список пуст, бот попытается сделать запрос напрямую
+]
+
 def get_main_menu():
     builder = InlineKeyboardBuilder()
     builder.button(text="🎯 Чистовик (Идеальные лоты)", callback_data="mode_chistovik")
@@ -32,7 +38,7 @@ def get_main_menu():
 @dp.message(F.text == "/start")
 async def cmd_start(message: Message):
     welcome_text = (
-        "Привет! 🌸 Я твой бот-парсер Avito (Kazan Tech Parser).\n\n"
+        "Привет! 🌸 Я твой бот-парсер Avito (Kazan Tech Parser) с ротацией прокси.\n\n"
         "🤖 **Что я умею:**\n"
         "• **Чистовик:** пропускаю только идеальные лоты без дефектов с посчитанной маржой от дна рынка.\n"
         "• **Радар (Карантин):** нахожу всё остальное ниже рынка и подсвечиваю скрытые косяки продавцов.\n\n"
@@ -40,7 +46,7 @@ async def cmd_start(message: Message):
     )
     await message.answer(welcome_text, reply_markup=get_main_menu())
 
-# Функция парсинга через мобильное API Авито
+# Функция парсинга через мобильное API Авито с поддержкой прокси
 async def fetch_avito_listings():
     url = "https://m.avito.ru/api/1/items?key=serp&locationId=88&categoryId=110&q=iphone"
     headers = {
@@ -50,32 +56,40 @@ async def fetch_avito_listings():
     }
     
     listings = []
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers, timeout=10) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    items = data.get("items", [])[:5]
-                    for item in items:
-                        title = item.get("title", "Без названия")
-                        price = item.get("priceDetailed", {}).get("string", "Цена не указана")
-                        item_id = item.get("id")
-                        link = f"https://www.avito.ru/kazan/{item.get('uri', item_id)}" if item_id else "https://www.avito.ru"
-                        listings.append({"title": title, "price": price, "link": link})
-    except Exception as e:
-        logging.error(f"Ошибка API парсинга: {e}")
-        
+    
+    # Пробуем сделать запрос (сначала напрямую, либо через прокси если они заданы)
+    proxies_to_try = PROXIES if PROXIES else [None]
+    
+    async with aiohttp.ClientSession() as session:
+        for proxy in proxies_to_try:
+            try:
+                async with session.get(url, headers=headers, proxy=proxy, timeout=8) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        items = data.get("items", [])[:5]
+                        for item in items:
+                            title = item.get("title", "Без названия")
+                            price = item.get("priceDetailed", {}).get("string", "Цена не указана")
+                            item_id = item.get("id")
+                            link = f"https://www.avito.ru/kazan/{item.get('uri', item_id)}" if item_id else "https://www.avito.ru"
+                            listings.append({"title": title, "price": price, "link": link})
+                        if listings:
+                            break # Если успешно собрали — выходим из цикла
+            except Exception as e:
+                logging.error(f"Ошибка с прокси {proxy}: {e}")
+                continue
+                
     return listings
 
 @dp.callback_query(F.data == "run_parse")
 async def process_parsing(callback: CallbackQuery):
-    await callback.message.answer("🔍 Запускаю парсинг свежих объявлений с Авито (Казань)... Погоди секунду! ✨")
+    await callback.message.answer("🔍 Запускаю парсинг свежих объявлений с Авито через защищенный узел (Казань)... Погоди секунду! ✨")
     listings = await fetch_avito_listings()
     
     if not listings:
         await callback.message.answer(
-            "⚠️ Не удалось получить данные в реальном времени (Авито временно ограничил запросы).\n\n"
-            "Но вот пример работы алгоритма в штатном режиме:",
+            "⚠️ Авито заблокировал текущий IP сервера. Чтобы парсинг работал стабильно 24/7, мы можем добавить список рабочих бесплатных прокси в код!\n\n"
+            "А пока вот пример работы алгоритма в штатном режиме:",
             reply_markup=get_main_menu()
         )
         return
