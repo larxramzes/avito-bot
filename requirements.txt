@@ -1,4 +1,2 @@
-aiogram
-beautifulsoup4
-requests
+aiogram>=3.0.0
 aiohttp
