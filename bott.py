@@ -7,14 +7,12 @@ from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from openai import AsyncOpenAI
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 
-# Получаем переменные окружения из Render
+# Получаем токен из Render
 TOKEN = os.getenv("BOT_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 PORT = int(os.getenv("PORT", 8080))
 
 if not TOKEN:
@@ -23,8 +21,6 @@ if not TOKEN:
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
-
-ai_client = AsyncOpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 def get_main_menu():
     builder = InlineKeyboardBuilder()
@@ -37,10 +33,10 @@ def get_main_menu():
 @dp.message(F.text == "/start")
 async def cmd_start(message: Message):
     welcome_text = (
-        "Привет! 🌸 Я твой бот-парсер Avito (Kazan Tech Parser) с интегрированной нейросетью.\n\n"
+        "Привет! 🌸 Я твой бот-парсер Avito (Kazan Tech Parser).\n\n"
         "🤖 **Что я умею:**\n"
-        "• **Чистовик:** пропускаю только идеальные лоты без дефектов с посчитанной маржой от дна рынка.\n"
-        "• **Радар (Карантин):** нахожу всё остальное ниже рынка и подсвечиваю скрытые косяки продавцов.\n\n"
+        "• **Чистовик:** пропускаю только идеальные лоты без дефектов с посчитанной маржой от дна рынка[span_1](start_span)[span_1](end_span).\n"
+        "• **Радар (Карантин):** нахожу всё остальное ниже рынка и подсвечиваю скрытые косяки продавцов[span_2](start_span)[span_2](end_span).\n\n"
         "Выбери нужный раздел в меню ниже:"
     )
     await message.answer(welcome_text, reply_markup=get_main_menu())
@@ -96,8 +92,8 @@ async def process_chistovik(callback: CallbackQuery):
         "📱 **Apple iPhone 14 Plus 128GB**\n"
         "💰 Цена: 52 000 ₽ (Дно рынка: 58 000 ₽)\n"
         "📈 **Чистая маржа:** +6 000 ₽\n"
-        "🛠 Состояние: Идеальное, без дефектов, АКБ 98%.\n\n"
-        "👉 *Статус:* Лот пропущен ИИ в Чистовик!",
+        "🛠 Состояние: Идеальное, без дефектов, АКБ 98%[span_3](start_span)[span_3](end_span).\n\n"
+        "👉 *Статус:* Лот пропущен в Чистовик[span_4](start_span)[span_4](end_span)!",
         reply_markup=get_main_menu()
     )
     await callback.answer()
@@ -109,7 +105,7 @@ async def process_radar(callback: CallbackQuery):
         "⚠️ *Пример лота с нюансом:*\n"
         "💻 **MacBook Air M1**\n"
         "💰 Цена: 45 000 ₽ (Ниже рынка)\n"
-        "🤖 **Вердикт ИИ:** Забраковано! ⚠️ *Нюанс:* Менялся дисплей.",
+        "🤖 **Вердикт:** Забраковано! ⚠️ *Нюанс:* Менялся дисплей[span_5](start_span)[span_5](end_span).",
         reply_markup=get_main_menu()
     )
     await callback.answer()
