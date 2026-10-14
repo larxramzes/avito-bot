@@ -6,7 +6,6 @@ from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiohttp_socks import ProxyConnector # Добавили коннектор для SOCKS5
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -22,8 +21,8 @@ if not TOKEN:
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# Твой купленный приватный SOCKS5 прокси
-PROXY_URL = "socks5://RjWUWQ:M516y3@147.45.82.76:8000"
+# Используем стандартный HTTP-протокол
+PROXY_URL = "http://RjWUWQ:M516y3@147.45.82.76:8000"
 
 def get_main_menu():
     builder = InlineKeyboardBuilder()
@@ -36,7 +35,7 @@ def get_main_menu():
 @dp.message(F.text == "/start")
 async def cmd_start(message: Message):
     welcome_text = (
-        "Привет! 🌸 Я твой бот-парсер Avito (Kazan Tech Parser) с SOCKS5-прокси.\n\n"
+        "Привет! 🌸 Я твой бот-парсер Avito (Kazan Tech Parser) с приватным прокси.\n\n"
         "🤖 **Что я умею:**\n"
         "• **Чистовик:** пропускаю только идеальные лоты без дефектов с посчитанной маржой от дна рынка.\n"
         "• **Радар (Карантин):** нахожу всё остальное ниже рынка и подсвечиваю скрытые косяки продавцов.\n\n"
@@ -44,7 +43,6 @@ async def cmd_start(message: Message):
     )
     await message.answer(welcome_text, reply_markup=get_main_menu())
 
-# Функция парсинга через мобильное API Авито с SOCKS5 прокси
 async def fetch_avito_listings():
     url = "https://m.avito.ru/api/1/items?key=serp&locationId=88&categoryId=110&q=iphone"
     headers = {
@@ -55,10 +53,9 @@ async def fetch_avito_listings():
     
     listings = []
     try:
-        # Настраиваем SOCKS5 коннектор
-        connector = ProxyConnector.from_url(PROXY_URL)
-        async with aiohttp.ClientSession(connector=connector) as session:
-            async with session.get(url, headers=headers, timeout=15) as response:
+        async with aiohttp.ClientSession() as session:
+            # Напрямую передаем proxy в aiohttp без ProxyConnector
+            async with session.get(url, headers=headers, proxy=PROXY_URL, timeout=15) as response:
                 if response.status == 200:
                     data = await response.json()
                     items = data.get("items", [])[:5]
@@ -69,13 +66,13 @@ async def fetch_avito_listings():
                         link = f"https://www.avito.ru/kazan/{item.get('uri', item_id)}" if item_id else "https://www.avito.ru"
                         listings.append({"title": title, "price": price, "link": link})
     except Exception as e:
-        logging.error(f"Ошибка запроса через SOCKS5 прокси: {e}")
+        logging.error(f"Ошибка запроса через HTTP прокси: {e}")
         
     return listings
 
 @dp.callback_query(F.data == "run_parse")
 async def process_parsing(callback: CallbackQuery):
-    await callback.message.answer("🔍 Запускаю парсинг свежих объявлений с Авито через SOCKS5 прокси (Казань)... Погоди секунду! ✨")
+    await callback.message.answer("🔍 Запускаю парсинг свежих объявлений с Авито через приватный прокси (Казань)... Погоди секунду! ✨")
     listings = await fetch_avito_listings()
     
     if not listings:
