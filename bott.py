@@ -17,10 +17,13 @@ TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 PORT = int(os.getenv("PORT", 8080))
 
+if not TOKEN:
+    logging.error("❌ ОШИБКА: Переменная окружения BOT_TOKEN не задана!")
+    exit(1)
+
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# Инициализация клиента ИИ (OpenAI / совместимые API)
 ai_client = AsyncOpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 def get_main_menu():
@@ -36,20 +39,18 @@ async def cmd_start(message: Message):
     welcome_text = (
         "Привет! 🌸 Я твой бот-парсер Avito (Kazan Tech Parser) с интегрированной нейросетью.\n\n"
         "🤖 **Что я умею:**\n"
-        "• **Чистовик:** пропускаю только идеальные лоты без дефектов с посчитанной маржой от дна рынка[span_0](start_span)[span_0](end_span).\n"
-        "• **Радар (Карантин):** нахожу всё остальное ниже рынка и подсвечиваю скрытые косяки продавцов[span_1](start_span)[span_1](end_span).\n\n"
+        "• **Чистовик:** пропускаю только идеальные лоты без дефектов с посчитанной маржой от дна рынка.\n"
+        "• **Радар (Карантин):** нахожу всё остальное ниже рынка и подсвечиваю скрытые косяки продавцов.\n\n"
         "Выбери нужный раздел в меню ниже:"
     )
     await message.answer(welcome_text, reply_markup=get_main_menu())
 
-# Функция реального парсинга свежих объявлений с Авито (пример по поисковому запросу техники в Казани)
 async def fetch_avito_listings():
     url = "https://www.avito.ru/kazan/telefony/smartfony-ASgBAgICAUXg1g4i?q=iphone"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept-Language": "ru-RU,ru;q=0.9"
     }
-    
     listings = []
     try:
         async with aiohttp.ClientSession() as session:
@@ -57,9 +58,7 @@ async def fetch_avito_listings():
                 if response.status == 200:
                     html = await response.text()
                     soup = BeautifulSoup(html, 'lxml')
-                    
-                    # Ищем карточки товаров на странице авито
-                    items = soup.select('[data-marker="item-iva"]')[:3] # берем первые 3 для примера
+                    items = soup.select('[data-marker="item-iva"]')[:3]
                     for item in items:
                         title_el = item.select_one('[data-marker="item-title"]')
                         price_el = item.select_one('[data-marker="item-price"]')
@@ -68,57 +67,25 @@ async def fetch_avito_listings():
                         title = title_el.text.strip() if title_el else "Без названия"
                         price = price_el.text.strip() if price_el else "Цена не указана"
                         link = "https://www.avito.ru" + link_el['href'] if link_el and link_el.has_attr('href') else "#"
-                        
                         listings.append({"title": title, "price": price, "link": link})
     except Exception as e:
         logging.error(f"Ошибка парсинга: {e}")
-        
     return listings
-
-# Функция анализа текста через ИИ
-async def analyze_with_ai(item_description: str):
-    if not ai_client:
-        return "⚠️ ИИ-анализ отключен (не задан OPENAI_API_KEY). Лот добавлен в Карантин."
-    
-    try:
-        response = await ai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system", 
-                    "content": "Ты нейросеть-парсер Авито. Оцени описание товара: есть ли скрытые дефекты (менялся экран, разбит корпус, не работает FaceID). Дай краткий вердикт: 'Чистовик' (идеально) или 'Карантин (есть нюанс)' и посчитай маржу."
-                },
-                {
-                    "role": "user", 
-                    "content": item_description
-                }
-            ],
-            temperature=0.3,
-            max_tokens=150
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        logging.error(f"Ошибка ИИ: {e}")
-        return "Ошибка обращения к нейросети."
 
 @dp.callback_query(F.data == "run_parse")
 async def process_parsing(callback: CallbackQuery):
     await callback.message.answer("🔍 Запускаю парсинг свежих объявлений с Авито (Казань)... Погоди секунду! ✨")
-    
     listings = await fetch_avito_listings()
-    
     if not listings:
         await callback.message.answer(
-            "⚠️ Не удалось получить данные напрямую с сайта (Авито защищен от ботов капчей).\n\n"
+            "⚠️ Авито временно защитил страницу от запросов.\n\n"
             "Но вот пример работы алгоритма в штатном режиме:",
             reply_markup=get_main_menu()
         )
         return
-
     for item in listings:
-        text = f"📱 **{item['title']}**\n💰 Цена: {item['price']}\n🔗 [Ссылка на объявление]({item['link']})"
+        text = f"📱 **{item['title']}**\n💰 Цена: {item['price']}\n🔗 [Ссылка]({item['link']})"
         await callback.message.answer(text, reply_markup=get_main_menu(), disable_web_page_preview=True)
-    
     await callback.answer()
 
 @dp.callback_query(F.data == "mode_chistovik")
@@ -129,8 +96,8 @@ async def process_chistovik(callback: CallbackQuery):
         "📱 **Apple iPhone 14 Plus 128GB**\n"
         "💰 Цена: 52 000 ₽ (Дно рынка: 58 000 ₽)\n"
         "📈 **Чистая маржа:** +6 000 ₽\n"
-        "🛠 Состояние: Идеальное, без дефектов, АКБ 98%[span_2](start_span)[span_2](end_span).\n\n"
-        "👉 *Статус:* Лот пропущен ИИ в Чистовик[span_3](start_span)[span_3](end_span)!",
+        "🛠 Состояние: Идеальное, без дефектов, АКБ 98%.\n\n"
+        "👉 *Статус:* Лот пропущен ИИ в Чистовик!",
         reply_markup=get_main_menu()
     )
     await callback.answer()
@@ -142,12 +109,11 @@ async def process_radar(callback: CallbackQuery):
         "⚠️ *Пример лота с нюансом:*\n"
         "💻 **MacBook Air M1**\n"
         "💰 Цена: 45 000 ₽ (Ниже рынка)\n"
-        "🤖 **Вердикт ИИ:** Забраковано! ⚠️ *Нюанс:* В описании указано «менялся дисплей, есть царапина на нижней крышке»[span_4](start_span)[span_4](end_span).",
+        "🤖 **Вердикт ИИ:** Забраковано! ⚠️ *Нюанс:* Менялся дисплей.",
         reply_markup=get_main_menu()
     )
     await callback.answer()
 
-# Веб-сервер для Render (предотвращает засыпание бота)
 async def handle_ping(request):
     return web.Response(text="Bot is active and running 24/7!")
 
