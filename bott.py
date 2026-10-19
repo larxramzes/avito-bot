@@ -192,20 +192,20 @@ def generate_ai_analytics(title: str, price: int, market: int, category: str) ->
         f"💬 <b>Совет по торгу:</b> Предложи наличные при встрече за быстрый выкуп со скидкой."
     ).replace(",", " ")
 
-# ================= КАТЕГОРИИ И ФИЛЬТРЫ =================
+# ================= КАТЕГОРИИ И ФИЛЬТРЫ (Мобильные ссылки) =================
 TARGETS = {
     "kazan": [
-        ("Телефоны", "https://www.avito.ru/kazan/telefony?s=104"),
-        ("Приставки и игры", "https://www.avito.ru/kazan/igry_pristavki_i_programmy?s=104"),
-        ("Ноутбуки", "https://www.avito.ru/kazan/noutbuki?s=104"),
-        ("Планшеты", "https://www.avito.ru/kazan/planshety_i_elektronnye_knigi?s=104"),
-        ("Аудио и видео", "https://www.avito.ru/kazan/audio_i_video?s=104"),
-        ("Бытовая техника", "https://www.avito.ru/kazan/bytovaya_tehnika?s=104"),
-        ("Товары для ПК", "https://www.avito.ru/kazan/tovary_dlya_kompyutera?s=104"),
+        ("Телефоны", "https://m.avito.ru/kazan/telefony?s=104"),
+        ("Приставки и игры", "https://m.avito.ru/kazan/igry_pristavki_i_programmy?s=104"),
+        ("Ноутбуки", "https://m.avito.ru/kazan/noutbuki?s=104"),
+        ("Планшеты", "https://m.avito.ru/kazan/planshety_i_elektronnye_knigi?s=104"),
+        ("Аудио и видео", "https://m.avito.ru/kazan/audio_i_video?s=104"),
+        ("Бытовая техника", "https://m.avito.ru/kazan/bytovaya_tehnika?s=104"),
+        ("Товары для ПК", "https://m.avito.ru/kazan/tovary_dlya_kompyutera?s=104"),
     ],
     "innopolis": [
-        ("Телефоны", "https://www.avito.ru/innopolis/telefony?s=104"),
-        ("Приставки и игры", "https://www.avito.ru/innopolis/igry_pristavki_i_programmy?s=104"),
+        ("Телефоны", "https://m.avito.ru/innopolis/telefony?s=104"),
+        ("Приставки и игры", "https://m.avito.ru/innopolis/igry_pristavki_i_programmy?s=104"),
     ]
 }
 
@@ -255,12 +255,16 @@ def extract_card_details(raw_window: str, slug: str) -> dict:
 
 # ================= 🔥 МНОГОПОТОЧНОЕ ЯДРО ЗАПРОСОВ =================
 def _sync_worker_fetch(url: str, proxy: str, headers: dict, region: str):
-    resp = cffi_requests.get(url, headers=headers, proxies={"http": proxy, "https": proxy}, impersonate="chrome", timeout=(2.5, 3.5))
-    if resp.status_code == 200 and len(resp.text) > 15000:
-        clean_html = normalize_html(resp.text)
-        unique_links = extract_links_from_html(clean_html, region)
-        if unique_links:
-            return clean_html, unique_links
+    try:
+        resp = cffi_requests.get(url, headers=headers, proxies={"http": proxy, "https": proxy}, impersonate="chrome", timeout=(3.0, 4.0))
+        logging.info(f"Proxy {proxy.split('@')[-1]} status: {resp.status_code}, len: {len(resp.text)}")
+        if resp.status_code == 200 and len(resp.text) > 5000:
+            clean_html = normalize_html(resp.text)
+            unique_links = extract_links_from_html(clean_html, region)
+            if unique_links:
+                return clean_html, unique_links
+    except Exception as e:
+        logging.error(f"Proxy error {proxy.split('@')[-1]}: {e}")
     return None, []
 
 async def fetch_smart(url: str, region: str):
@@ -272,37 +276,29 @@ async def fetch_smart(url: str, region: str):
 
     random.shuffle(available)
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Sec-Fetch-User": "?1",
-        "Cache-Control": "max-age=0",
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "ru-RU,ru;q=0.9",
     }
     loop = asyncio.get_running_loop()
 
-    for proxy in available[:15]:
+    for proxy in available[:10]:
         if not state.is_scanning:
             break
         port_str = proxy.split(':')[-1]
         state.last_activity_time = time.time()
         try:
             future = loop.run_in_executor(ThreadPool, _sync_worker_fetch, url, proxy, headers, region)
-            clean_html, unique_links = await asyncio.wait_for(future, timeout=4.0)
+            clean_html, unique_links = await asyncio.wait_for(future, timeout=5.0)
             if clean_html and unique_links:
                 state.current_ip = f"Порт {port_str}"
                 state.last_activity_time = time.time()
-                logging.info(f"📄 Успех на порту {port_str}! Найдено карточек: {len(unique_links)}")
+                logging.info(f"📄 Успех на порту {port_str}! Карточек: {len(unique_links)}")
                 return clean_html, unique_links
             else:
-                banned_proxies[proxy] = now + 300
+                banned_proxies[proxy] = now + 120
         except Exception:
-            banned_proxies[proxy] = now + 300
+            banned_proxies[proxy] = now + 120
     return None, []
 
 async def send_deal_card(bot: Bot, chat_id: int, details: dict, price_val: int, matched_rule: dict, full_url: str) -> bool:
