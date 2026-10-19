@@ -423,15 +423,20 @@ async def web_server():
     logging.info(f"🌐 Веб-сервер для Render запущен на порту {PORT}")
 
 # ================= ЗАПУСК =================
-async def main():
+async def on_startup(bot: Bot):
     init_db()
+    asyncio.create_task(background_scanner(bot))
+    logging.info("🕵️ Снайпер 2026 успешно стартовал в фоне на Render!")
+
+async def main():
     session = AiohttpSession(timeout=60)
     bot = Bot(token=BOT_TOKEN, session=session, default=DefaultBotProperties(parse_mode="HTML"))
 
-    # Запускаем веб-сервер для Render и фоновый сканер
+    # Запускаем веб-сервер для Render
     await web_server()
-    asyncio.create_task(background_scanner(bot))
-    logging.info("🕵️ Снайпер 2026 запущен в облаке Render!")
+    
+    # Запускаем сканер в фоне
+    await on_startup(bot)
 
     while True:
         try:
