@@ -1,13 +1,16 @@
 import asyncio
+import html as html_lib
 import logging
+import os
 import random
 import re
 import sqlite3
+import sys
 import time
 from dataclasses import dataclass
-import html as html_lib
-import os
+from datetime import datetime  # 🔥 ИСПРАВЛЕНО: теперь datetime на месте!
 
+from aiohttp import web
 from curl_cffi.requests import AsyncSession
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
@@ -19,31 +22,38 @@ from aiogram.types import (
 )
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
-from aiohttp import web
 
 # ================= НАСТРОЙКИ =================
 BOT_TOKEN = "8968394996:AAEpGiADwUoqHZ1KqCA1MllKhFOXOF6OA10"
 DB_PATH = "safe_items.db"
 PORT = int(os.environ.get("PORT", 10000))
 
+# По умолчанию сразу прописан твой ID чата, чтобы бот знал куда слать даже после рестарта Render!
+DEFAULT_CHAT_ID = 1128246797
+
 PROXY_LIST = [f"http://W3KAbVZ7rM:ruTTPneIyG@proxy.proxyma.io:{p}" for p in range(10000, 11000)]
 banned_proxies = {}
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logging.getLogger("aiogram.dispatcher").setLevel(logging.CRITICAL)
-logging.getLogger("aiogram.event").setLevel(logging.CRITICAL)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    stream=sys.stdout,
+    force=True,
+)
 
 @dataclass
 class ScannerState:
-    active_chat_id: int | None = None
-    is_scanning: bool = False
+    active_chat_id: int | None = DEFAULT_CHAT_ID
+    is_scanning: bool = True
     stats_checked: int = 0
     stats_found: int = 0
     current_ip: str = "Определяется..."
     target_idx: int = 0
+    last_error: str = "Нет ошибок"
 
 state = ScannerState()
 
+# ================= БАЗА =================
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     conn.execute("PRAGMA journal_mode=WAL;")
@@ -72,6 +82,7 @@ def mark_seen(ad_id: str):
     except Exception:
         init_db()
 
+# ================= КАТЕГОРИИ И МАТРИЦА ЦЕН =================
 TARGETS = [
     ("Телефоны", "https://m.avito.ru/kazan/telefony?s=104"),
     ("Приставки и игры", "https://m.avito.ru/kazan/igry_pristavki_i_programmy?s=104"),
@@ -248,6 +259,7 @@ async def fetch_smart(url: str):
                         continue
 
                     state.current_ip = f"Порт {port_str}"
+                    logging.info(f"📄 Успех на порту {port_str}! Найдено карточек Казани: {len(unique_links)}")
                     return clean_html, unique_links
                 else:
                     banned_proxies[proxy] = now + 300
@@ -256,12 +268,48 @@ async def fetch_smart(url: str):
 
     return None, []
 
+async def send_deal_card(bot: Bot, chat_id: int, details: dict, price_val: int, matched_rule: dict, full_url: str) -> bool:
+    profit = matched_rule["market"] - price_val
+    now_str = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+
+    caption = (
+        f"<b>{html_lib.escape(details['title'])}</b>\n"
+        f"💵 <b>{price_val:,} ₽</b>  <i>(Рынок: ~{matched_rule['market']:,} ₽ | 🔥 +{profit:,} ₽)</i>\n"
+        f"🌍 Казань\n\n"
+        f"<blockquote>{html_lib.escape(details['description'])}</blockquote>\n\n"
+        f"🎯 Категория: {matched_rule['name']}\n"
+        f"🔗 <a href=\"{full_url}\">Прямая ссылка на Авито</a>\n\n"
+        f"📅 {now_str}"
+    ).replace(",", " ")
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🚀 Открыть в Казани", url=full_url)]])
+
+    try:
+        if details.get("image_url"):
+            await bot.send_photo(chat_id=chat_id, photo=details["image_url"], caption=caption, parse_mode="HTML", reply_markup=kb)
+        else:
+            await bot.send_message(chat_id=chat_id, text=caption, parse_mode="HTML", reply_markup=kb)
+        logging.info(f"🚀 ОТПРАВЛЕНО В ЧАТ: {details['title']} за {price_val} ₽!")
+        return True
+    except Exception as e:
+        logging.warning(f"⚠️ Ошибка отправки фото, шлю текстом: {e}")
+        try:
+            await bot.send_message(chat_id=chat_id, text=caption, parse_mode="HTML", reply_markup=kb, disable_web_page_preview=False)
+            logging.info(f"🚀 ОТПРАВЛЕНО В ЧАТ (ТЕКСТОМ): {details['title']} за {price_val} ₽!")
+            return True
+        except Exception as e2:
+            state.last_error = str(e2)[:120]
+            logging.error(f"❌ Критическая ошибка отправки в ТГ: {e2}")
+            return False
+
 async def parse_electronics(bot: Bot):
     cat_name, url = TARGETS[state.target_idx % len(TARGETS)]
     state.target_idx += 1
 
+    logging.info(f"🕵️ Сканируем категорию: {cat_name}...")
     clean_html, unique_links = await fetch_smart(url)
     if not clean_html or not unique_links:
+        logging.warning(f"❌ Не удалось пробить категорию '{cat_name}' в этом проходе, переключаемся...")
         return
 
     new_checked = 0
@@ -310,40 +358,16 @@ async def parse_electronics(bot: Bot):
 
         if price_val <= matched_rule["max_buy"]:
             mark_seen(ad_id)
-            state.stats_found += 1
-            matched_in_pass += 1
-            profit = matched_rule["market"] - price_val
             details = extract_card_details(narrow, slug)
-
-            now_str = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
             full_url = f"https://www.avito.ru/kazan/{cat_path}/{slug}"
 
-            caption = (
-                f"<b>{html_lib.escape(details['title'])}</b>\n"
-                f"💵 <b>{price_val:,} ₽</b>  <i>(Рынок: ~{matched_rule['market']:,} ₽ | 🔥 +{profit:,} ₽)</i>\n"
-                f"🌍 Казань\n\n"
-                f"<blockquote expandable>{html_lib.escape(details['description'])}</blockquote>\n\n"
-                f"🎯 Категория: {matched_rule['name']}\n\n"
-                f"📅 {now_str}"
-            ).replace(",", " ")
-
-            kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🚀 Открыть в Казани", url=full_url)]])
-
             if state.active_chat_id:
-                try:
-                    if details["image_url"]:
-                        await bot.send_photo(chat_id=state.active_chat_id, photo=details["image_url"], caption=caption, parse_mode="HTML", reply_markup=kb)
-                    else:
-                        await bot.send_message(chat_id=state.active_chat_id, text=caption, parse_mode="HTML", reply_markup=kb)
-                    logging.info(f"🚀 ОТПРАВЛЕНО В ЧАТ: {details['title']} за {price_val} ₽!")
-                except Exception as e:
-                    # 🔥 ЕСЛИ КАРТИНКА НЕ ОТПРАВИЛАСЬ, ШЛЕМ ТОЛЬКО ТЕКСТ, А НЕ СГОРАЕМ В ТИШИНЕ!
-                    logging.warning(f"⚠️ Ошибка отправки фото, шлю текстом: {e}")
-                    try:
-                        await bot.send_message(chat_id=state.active_chat_id, text=caption, parse_mode="HTML", reply_markup=kb)
-                        logging.info(f"🚀 ОТПРАВЛЕНО В ЧАТ (ТЕКСТОМ): {details['title']} за {price_val} ₽!")
-                    except Exception as e2:
-                        logging.error(f"❌ Критическая ошибка отправки в ТГ: {e2}")
+                sent_ok = await send_deal_card(bot, state.active_chat_id, details, price_val, matched_rule, full_url)
+                if sent_ok:
+                    state.stats_found += 1
+                    matched_in_pass += 1
+
+    logging.info(f"📊 Итог '{cat_name}': новых проверено {new_checked} | отправлено в чат: {matched_in_pass} (Всего проверено: {state.stats_checked})")
 
 # ================= ФОН =================
 async def background_scanner(bot: Bot):
@@ -356,44 +380,72 @@ async def background_scanner(bot: Bot):
             await parse_electronics(bot)
 
             pause_sec = random.randint(20, 38)
+            logging.info(f"⏳ Пауза {pause_sec} сек перед следующей категорией...")
             for _ in range(pause_sec):
                 if not state.is_scanning:
                     break
                 await asyncio.sleep(1)
         except Exception as e:
+            state.last_error = str(e)[:120]
             logging.error(f"⚠️ Ошибка в сканере: {e}")
             await asyncio.sleep(10)
 
 # ================= ХЕНДЛЕРЫ =================
 dp = Dispatcher()
 
+def get_main_kb():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="▶️ Запустить сканер"), KeyboardButton(text="⏹ Остановить сканер")],
+            [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="🧪 Тест отправки")],
+        ],
+        resize_keyboard=True,
+    )
+
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
+    logging.info(f"📲 Нажата кнопка /start от пользователя {message.chat.id}")
     state.active_chat_id = message.chat.id
     state.is_scanning = True
     await message.answer(
         f"🕵️ <b>Ультра-Снайпер 2026 запущен (Render Mode)!</b>\n"
-        f"Чат привязан: <code>{message.chat.id}</code> ✨",
+        f"Чат привязан: <code>{message.chat.id}</code> ✨\n\n"
+        f"Нажми <b>🧪 Тест отправки</b>, чтобы проверить доставку карточек!",
         parse_mode="HTML",
-        reply_markup=ReplyKeyboardMarkup(
-            keyboard=[[KeyboardButton(text="▶️ Запустить сканер"), KeyboardButton(text="⏹ Остановить сканер")], [KeyboardButton(text="📊 Статистика")]],
-            resize_keyboard=True
-        )
+        reply_markup=get_main_kb(),
     )
 
 @dp.message(F.text.contains("Запустить"))
 async def start_scan(message: types.Message):
+    logging.info(f"📲 Нажата кнопка 'Запустить сканер' в чате {message.chat.id}")
     state.active_chat_id = message.chat.id
     state.is_scanning = True
-    await message.answer(f"🕵️ <b>Сканирование активно!</b> Отправляю лоты сюда (ID: <code>{message.chat.id}</code>) ✨", parse_mode="HTML")
+    await message.answer(
+        f"🕵️ <b>Сканирование активно!</b> Отправляю лоты сюда (ID: <code>{message.chat.id}</code>) ✨",
+        parse_mode="HTML",
+        reply_markup=get_main_kb(),
+    )
 
 @dp.message(F.text.contains("Остановить"))
 async def stop_scan(message: types.Message):
+    logging.info(f"📲 Нажата кнопка 'Остановить сканер' в чате {message.chat.id}")
     state.is_scanning = False
-    await message.answer("⏸ <b>Сканер остановлен.</b> 🌸", parse_mode="HTML")
+    await message.answer("⏸ <b>Сканер остановлен.</b> 🌸", parse_mode="HTML", reply_markup=get_main_kb())
+
+@dp.message(F.text.contains("Тест"))
+async def test_send(message: types.Message):
+    state.active_chat_id = message.chat.id
+    test_details = {
+        "title": "Тестовый iPhone 16 Pro 256 ГБ (Проверка связи)",
+        "image_url": None,
+        "description": "Если ты видишь эту карточку и кнопку ниже — доставка ссылок на Render работает на 100%!",
+    }
+    test_rule = {"name": "iPhone 16 Pro / Max", "max_buy": 72000, "market": 92000}
+    await send_deal_card(bot=message.bot, chat_id=message.chat.id, details=test_details, price_val=55000, matched_rule=test_rule, full_url="https://www.avito.ru/kazan/telefony")
 
 @dp.message(F.text.contains("Статистика"))
 async def show_stats(message: types.Message):
+    logging.info(f"📲 Запрошена 'Статистика' в чате {message.chat.id}")
     status = "🟢 Работает" if state.is_scanning else "🔴 На паузе"
     now = time.time()
     active_count = len([p for p in PROXY_LIST if p not in banned_proxies or banned_proxies[p] < now])
@@ -406,8 +458,9 @@ async def show_stats(message: types.Message):
         f"🟢 Активных прокси: <b>{active_count} / {len(PROXY_LIST)}</b>\n"
         f"🔍 Проверено новых лотов: <b>{state.stats_checked}</b>\n"
         f"🔥 Отправлено выгодных: <b>{state.stats_found}</b>\n"
+        f"🛠 Последняя ошибка: <code>{html_lib.escape(state.last_error)}</code>"
     )
-    await message.answer(text, parse_mode="HTML")
+    await message.answer(text, parse_mode="HTML", reply_markup=get_main_kb())
 
 # ================= ВЕБ-СЕРВЕР ДЛЯ RENDER =================
 async def handle_ping(request):
