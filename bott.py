@@ -30,7 +30,8 @@ PORT = int(os.environ.get("PORT", 10000))
 
 DEFAULT_CHAT_ID = 1128246797
 
-PROXY_LIST = [f"http://W3KAbVZ7rM:ruTTPneIyG@proxy.proxyma.io:{p}" for p in range(10000, 11000)]
+# 🔥 Точный пул из указанных 100 прокси (10000 - 10099)
+PROXY_LIST = [f"http://W3KAbVZ7rM:ruTTPneIyG@proxy.proxyma.io:{p}" for p in range(10000, 10100)]
 banned_proxies = {}
 
 logging.basicConfig(
