@@ -310,7 +310,8 @@ async def parse_electronics(bot: Bot):
     logging.info(f"🕵️ Сканируем категорию: {cat_name}...")
     
     try:
-        clean_html, unique_links = await asyncio.wait_for(fetch_smart(url), timeout=15.0)
+        task = asyncio.create_task(fetch_smart(url))
+        clean_html, unique_links = await asyncio.wait_for(task, timeout=18.0)
     except asyncio.TimeoutError:
         logging.warning(f"⏰ Таймаут сканирования '{cat_name}', прокси завис, идем дальше...")
         return
@@ -404,7 +405,7 @@ async def background_scanner(bot: Bot):
             logging.error(f"⚠️ Ошибка в фоновом сканере: {e}")
             await asyncio.sleep(10)
 
-# ================= 🛡️ СТОРОЖЕВОЙ ТАЙМЕР =================
+# ================= 🛡️ СТОРОЖЕВОЙ ТАЙМЕР С АВТОПЕРЕЗАПУСКОМ ПРОЦЕССА =================
 async def watchdog_monitor(bot: Bot):
     while True:
         await asyncio.sleep(45)
@@ -412,20 +413,19 @@ async def watchdog_monitor(bot: Bot):
             continue
         
         if time.time() - state.last_activity_time > 120:
-            logging.warning("⚠️ СТОРОЖЕВОЙ ТАЙМЕР: Замечено зависание потока! Экстренно сбрасываем прокси...")
-            banned_proxies.clear()
-            state.last_activity_time = time.time()
-            state.target_idx = 0
-            
+            logging.warning("⚠️ СТОРОЖЕВОЙ ТАЙМЕР: Полное зависание потока! Перезапускаю скрипт...")
             if state.active_chat_id:
                 try:
                     await bot.send_message(
                         chat_id=state.active_chat_id,
-                        text="🛡️ <b>Самодиагностика:</b> Сбросил зависший прокси-поток и возобновил поиск!",
+                        text="🛡️ <b>Самодиагностика:</b> Завис сетевой сокет. Перезапускаю процесс снайпера в облаке!",
                         parse_mode="HTML"
                     )
                 except Exception:
                     pass
+            
+            # 🔥 Жесткий автоперезапуск процесса
+            os.execv(sys.executable, [sys.executable] + sys.argv)
 
 # ================= ХЕНДЛЕРЫ =================
 dp = Dispatcher()
@@ -444,7 +444,7 @@ async def cmd_start(message: types.Message):
     state.active_chat_id = message.chat.id
     state.is_scanning = True
     await message.answer(
-        f"🕵️ <b>Ультра-Снайпер 2026 запущен (Неблокирующие паузы + Самозащита)!</b>\n"
+        f"🕵️ <b>Ультра-Снайпер 2026 запущен (Автоперезапуск активен)!</b>\n"
         f"Чат привязан: <code>{message.chat.id}</code> ✨",
         parse_mode="HTML",
         reply_markup=get_main_kb(),
@@ -455,7 +455,7 @@ async def start_scan(message: types.Message):
     state.active_chat_id = message.chat.id
     state.is_scanning = True
     await message.answer(
-        f"🕵️ <b>Сканирование активно!</b> Кнопки откликаются мгновенно ✨",
+        f"🕵️ <b>Сканирование активно!</b> Сторожевой таймер следит за процессом 24/7 ✨",
         parse_mode="HTML",
         reply_markup=get_main_kb(),
     )
@@ -471,14 +471,14 @@ async def test_send(message: types.Message):
     test_details = {
         "title": "Тестовый iPhone 16 Pro 256 ГБ (Проверка связи)",
         "image_url": None,
-        "description": "Кнопки работают мгновенно, паузы не блокируют поток!",
+        "description": "Автоперезапуск и сторожевой таймер работают идеально!",
     }
     test_rule = {"name": "iPhone 16 Pro / Max", "max_buy": 62000, "market": 79000}
     await send_deal_card(bot=message.bot, chat_id=message.chat.id, details=test_details, price_val=55000, matched_rule=test_rule, full_url="https://www.avito.ru/kazan/telefony")
 
 @dp.message(F.text.contains("Статистика"))
 async def show_stats(message: types.Message):
-    status = "🟢 Работает (Асинхронный режим)" if state.is_scanning else "🔴 На паузе"
+    status = "🟢 Работает (Авто-восстановление ON)" if state.is_scanning else "🔴 На паузе"
     now = time.time()
     active_count = len([p for p in PROXY_LIST if p not in banned_proxies or banned_proxies[p] < now])
 
@@ -496,7 +496,7 @@ async def show_stats(message: types.Message):
 
 # ================= ВЕБ-СЕРВЕР ДЛЯ RENDER =================
 async def handle_ping(request):
-    return web.Response(text="Bot is running 24/7 with Non-Blocking Pauses & Self-Healing!")
+    return web.Response(text="Bot is running 24/7 with Self-Healing Restart!")
 
 async def web_server():
     app = web.Application()
@@ -512,7 +512,7 @@ async def on_startup(bot: Bot):
     init_db()
     asyncio.create_task(background_scanner(bot))
     asyncio.create_task(watchdog_monitor(bot))
-    logging.info("🛡️ Снайпер 2026 успешно запущен с неблокирующими паузами!")
+    logging.info("🛡️ Снайпер 2026 запущен с функцией автоматического перезапуска при зависании!")
 
 async def main():
     session = AiohttpSession(timeout=60)
