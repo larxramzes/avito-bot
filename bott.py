@@ -39,7 +39,7 @@ DEFAULT_CHAT_ID = 1128246797
 PROXY_LIST = [f"http://W3KAbVZ7rM:ruTTPneIyG@proxy.proxyma.io:{p}" for p in range(10000, 10100)]
 banned_proxies = {}
 
-ThreadPool = ThreadPoolExecutor(max_workers=6, thread_name_prefix="AvitoWorker")
+ThreadPool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="AvitoWorker")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,7 +54,7 @@ class ScannerState:
     is_scanning: bool = True
     stats_checked: int = 0
     stats_found: int = 0
-    current_ip: str = "Определяется..."
+    current_ip: str = "Инициализация..."
     target_idx: int = 0
     last_error: str = "Нет ошибок"
     last_activity_time: float = time.time()
@@ -192,7 +192,7 @@ def generate_ai_analytics(title: str, price: int, market: int, category: str) ->
         f"💬 <b>Совет по торгу:</b> Предложи наличные при встрече за быстрый выкуп со скидкой."
     ).replace(",", " ")
 
-# ================= КАТЕГОРИИ И ФИЛЬТРЫ (Мобильные ссылки) =================
+# ================= КАТЕГОРИИ И ФИЛЬТРЫ =================
 TARGETS = {
     "kazan": [
         ("Телефоны", "https://m.avito.ru/kazan/telefony?s=104"),
@@ -215,20 +215,17 @@ SCAM_WORDS = ["предоплата", "icloud", "заблокирован", "м�
 def normalize_html(raw_html: str) -> str:
     text = html_lib.unescape(raw_html)
     text = text.replace("\\u002F", "/").replace("\\u002f", "/").replace("%2F", "/").replace("%2f", "/").replace("\\/", "/").replace('\\"', '"')
-    for marker in ("itemsCarousel", "Доставка из других", "Другие города"):
-        idx = text.find(marker)
-        if idx != -1 and idx > 15000:
-            text = text[:idx]
     return text
 
 def extract_links_from_html(clean_html: str, region: str) -> list:
     links = []
-    pattern = re.compile(rf"/{region}/([a-z0-9_-]+)/([a-z0-9_-]+?_(\d{8,12}))(?![0-9])", re.IGNORECASE)
+    # Гибкий паттерн для извлечения ID и путей объявлений
+    pattern = re.compile(rf"/(?:{region})/([a-z0-9_-]+)/([a-z0-9_-]+?_(\d{{8,12}}))", re.IGNORECASE)
     for m in pattern.finditer(clean_html):
         cat_path = m.group(1).lower()
         raw_slug = m.group(2)
         ad_id = m.group(3)
-        if cat_path in ("prof", "favorites", "login", "search", "user"):
+        if cat_path in ("prof", "favorites", "login", "search", "user", "immovables", "avito"):
             continue
         links.append((cat_path, raw_slug, ad_id, m.start()))
 
@@ -254,18 +251,30 @@ def extract_card_details(raw_window: str, slug: str) -> dict:
     return {"title": title, "image_url": image_url, "description": desc[:300]}
 
 # ================= 🔥 МНОГОПОТОЧНОЕ ЯДРО ЗАПРОСОВ =================
-def _sync_worker_fetch(url: str, proxy: str, headers: dict, region: str):
+USER_AGENTS = [
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148",
+    "Mozilla/5.0 (Linux; Android 13; SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+]
+
+def _sync_worker_fetch(url: str, proxy: str, region: str):
+    headers = {
+        "User-Agent": random.choice(USER_AGENTS),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "ru-RU,ru;q=0.9",
+        "Cache-Control": "no-cache",
+    }
     try:
         resp = cffi_requests.get(url, headers=headers, proxies={"http": proxy, "https": proxy}, impersonate="chrome", timeout=(3.0, 4.0))
-        logging.info(f"Proxy {proxy.split('@')[-1]} status: {resp.status_code}, len: {len(resp.text)}")
-        if resp.status_code == 200 and len(resp.text) > 5000:
+        if resp.status_code == 200 and len(resp.text) > 8000:
             clean_html = normalize_html(resp.text)
             unique_links = extract_links_from_html(clean_html, region)
             if unique_links:
-                return clean_html, unique_links
-    except Exception as e:
-        logging.error(f"Proxy error {proxy.split('@')[-1]}: {e}")
-    return None, []
+                return clean_html, unique_links, 200
+        return None, [], resp.status_code
+    except Exception:
+        return None, [], 500
 
 async def fetch_smart(url: str, region: str):
     now = time.time()
@@ -275,11 +284,6 @@ async def fetch_smart(url: str, region: str):
         available = PROXY_LIST.copy()
 
     random.shuffle(available)
-    headers = {
-        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "ru-RU,ru;q=0.9",
-    }
     loop = asyncio.get_running_loop()
 
     for proxy in available[:10]:
@@ -288,17 +292,17 @@ async def fetch_smart(url: str, region: str):
         port_str = proxy.split(':')[-1]
         state.last_activity_time = time.time()
         try:
-            future = loop.run_in_executor(ThreadPool, _sync_worker_fetch, url, proxy, headers, region)
-            clean_html, unique_links = await asyncio.wait_for(future, timeout=5.0)
+            future = loop.run_in_executor(ThreadPool, _sync_worker_fetch, url, proxy, region)
+            clean_html, unique_links, status = await asyncio.wait_for(future, timeout=5.0)
+            
             if clean_html and unique_links:
                 state.current_ip = f"Порт {port_str}"
                 state.last_activity_time = time.time()
-                logging.info(f"📄 Успех на порту {port_str}! Карточек: {len(unique_links)}")
                 return clean_html, unique_links
-            else:
-                banned_proxies[proxy] = now + 120
+            elif status in (403, 429, 999):
+                banned_proxies[proxy] = now + 600
         except Exception:
-            banned_proxies[proxy] = now + 120
+            banned_proxies[proxy] = now + 300
     return None, []
 
 async def send_deal_card(bot: Bot, chat_id: int, details: dict, price_val: int, matched_rule: dict, full_url: str) -> bool:
@@ -343,8 +347,6 @@ async def parse_electronics(bot: Bot):
 
     price_rules = get_price_rules()
     stop_words = get_stop_words()
-    new_checked = 0
-    matched_in_pass = 0
 
     for cat_path, raw_slug, ad_id, pos in unique_links:
         state.last_activity_time = time.time()
@@ -354,7 +356,6 @@ async def parse_electronics(bot: Bot):
             continue
 
         state.stats_checked += 1
-        new_checked += 1
 
         narrow = clean_html[max(0, pos - 350) : pos + 550]
         combined = f"{slug.lower()} {narrow.lower()}"
@@ -396,9 +397,14 @@ async def parse_electronics(bot: Bot):
                 sent_ok = await send_deal_card(bot, state.active_chat_id, details, price_val, matched_rule, full_url)
                 if sent_ok:
                     state.stats_found += 1
-                    matched_in_pass += 1
 
 async def background_scanner(bot: Bot):
+    # 🔥 Делаем мгновенный первый тестовый запрос при старте
+    try:
+        await parse_electronics(bot)
+    except Exception:
+        pass
+
     while True:
         try:
             if not state.is_scanning or not state.active_chat_id:
@@ -409,7 +415,7 @@ async def background_scanner(bot: Bot):
             state.last_activity_time = time.time()
             await parse_electronics(bot)
 
-            pause_sec = random.randint(15, 28)
+            pause_sec = random.randint(20, 35)
             for _ in range(pause_sec):
                 state.last_activity_time = time.time()
                 if not state.is_scanning or not state.active_chat_id:
@@ -424,7 +430,7 @@ def hardware_kernel_watchdog():
         if not state.is_scanning:
             state.last_activity_time = time.time()
             continue
-        if time.time() - state.last_activity_time > 90:
+        if time.time() - state.last_activity_time > 120:
             os._exit(1)
 
 # ================= 🌐 WEB-СЕРВЕР И MINI APP =================
