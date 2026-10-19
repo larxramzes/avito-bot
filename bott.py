@@ -241,13 +241,14 @@ async def fetch_smart(url: str):
         "Cache-Control": "no-cache",
     }
 
-    for proxy in available[:45]:
+    # 🔥 Молниеносный обход: проверяем до 15 прокси с жестким таймаутом 6 сек на порт
+    for proxy in available[:15]:
         if not state.is_scanning:
             break
         port_str = proxy.split(':')[-1]
         try:
             async with AsyncSession(impersonate="chrome", proxies={"http": proxy, "https": proxy}) as session:
-                resp = await session.get(url, headers=headers, timeout=12.0)
+                resp = await session.get(url, headers=headers, timeout=6.0)
 
                 if resp.status_code == 200 and len(resp.text) > 15000:
                     clean_html = normalize_html(resp.text)
