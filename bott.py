@@ -36,8 +36,8 @@ DEFAULT_CHAT_ID = 1128246797
 PROXY_LIST = [f"http://W3KAbVZ7rM:ruTTPneIyG@proxy.proxyma.io:{p}" for p in range(10000, 10100)]
 banned_proxies = {}
 
-# 🔥 Пул изолированных системных потоков для C-движка curl_cffi
- ThreadPool = ThreadPoolExecutor(max_workers=6, thread_name_prefix="AvitoWorker")
+# 🔥 Пул изолированных системных потоков для C-движка curl_cffi (без отступов!)
+ThreadPool = ThreadPoolExecutor(max_workers=6, thread_name_prefix="AvitoWorker")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -234,13 +234,12 @@ def extract_card_details(raw_window: str, slug: str) -> dict:
 
 # ================= 🔥 МНОГОПОТОЧНОЕ ЯДРО ЗАПРОСОВ (ИЗОЛИРОВАНО ОТ TELEGRAM) =================
 def _sync_worker_fetch(url: str, proxy: str, headers: dict):
-    """Выполняется в отдельном системном потоке. Даже если C-сокет зависнет, бот не пострадает!"""
     resp = cffi_requests.get(
         url,
         headers=headers,
         proxies={"http": proxy, "https": proxy},
         impersonate="chrome",
-        timeout=(3.0, 4.0),  # 3 сек на коннект, 4 сек на чтение
+        timeout=(3.0, 4.0),
     )
     if resp.status_code == 200 and len(resp.text) > 15000:
         clean_html = normalize_html(resp.text)
@@ -273,7 +272,6 @@ async def fetch_smart(url: str):
         port_str = proxy.split(':')[-1]
         state.last_activity_time = time.time()
         try:
-            # Запускаем запрос в отдельном системном потоке с жестким контролем времени
             future = loop.run_in_executor(ThreadPool, _sync_worker_fetch, url, proxy, headers)
             clean_html, unique_links = await asyncio.wait_for(future, timeout=5.5)
 
@@ -394,7 +392,6 @@ async def parse_electronics(bot: Bot):
 
     logging.info(f"📊 Итог '{cat_name}': новых проверено {new_checked} | отправлено в чат: {matched_in_pass} (Всего проверено: {state.stats_checked})")
 
-# ================= ФОН С АВТОМАТИЧЕСКИМ ПЕРЕЗАПУСКОМ ЗАДАЧИ =================
 async def background_scanner(bot: Bot):
     while True:
         try:
@@ -416,7 +413,6 @@ async def background_scanner(bot: Bot):
                 await asyncio.sleep(1)
                 
         except asyncio.CancelledError:
-            logging.warning("🔄 Фоновая задача сканера перезапускается ядром...")
             break
         except Exception as e:
             state.last_error = str(e)[:120]
@@ -425,7 +421,6 @@ async def background_scanner(bot: Bot):
 
 # ================= 🛡️ АППАРАТНЫЙ КОНТРОЛЬ ЯДРА (HARDWARE THREAD WATCHDOG) =================
 def hardware_kernel_watchdog():
-    """Работает в отдельном системном потоке OS. Не зависит от зависаний asyncio!"""
     while True:
         time.sleep(15)
         if not state.is_scanning:
@@ -435,7 +430,7 @@ def hardware_kernel_watchdog():
         idle_sec = time.time() - state.last_activity_time
         if idle_sec > 90:
             logging.critical(f"🚨 АППАРАТНЫЙ WATCHDOG: Ядро не отвечает {int(idle_sec)} сек! Экстренный перезапуск процесса...")
-            os._exit(1)  # Мгновенный выход на уровне ядра ОС (Render тут же поднимает чистый процесс)
+            os._exit(1)
 
 # ================= ХЕНДЛЕРЫ =================
 dp = Dispatcher()
@@ -524,7 +519,6 @@ async def web_server():
 # ================= ЗАПУСК =================
 async def on_startup(bot: Bot):
     init_db()
-    # Запускаем аппаратный сторожевой поток ядра ОС
     wd_thread = threading.Thread(target=hardware_kernel_watchdog, daemon=True, name="HardwareWatchdog")
     wd_thread.start()
     
