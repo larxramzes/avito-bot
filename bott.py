@@ -49,6 +49,7 @@ class ScannerState:
     current_ip: str = "Определяется..."
     target_idx: int = 0
     last_error: str = "Нет ошибок"
+    last_activity_time: float = time.time()  # 🔥 Для сторожевого таймера
 
 state = ScannerState()
 
@@ -241,7 +242,6 @@ async def fetch_smart(url: str):
         "Cache-Control": "no-cache",
     }
 
-    # 🔥 Молниеносный обход: проверяем до 15 прокси с жестким таймаутом 6 сек на порт
     for proxy in available[:15]:
         if not state.is_scanning:
             break
@@ -259,6 +259,7 @@ async def fetch_smart(url: str):
                         continue
 
                     state.current_ip = f"Порт {port_str}"
+                    state.last_activity_time = time.time()  # 🔥 Фиксируем активность!
                     logging.info(f"📄 Успех на порту {port_str}! Найдено карточек Казани: {len(unique_links)}")
                     return clean_html, unique_links
                 else:
@@ -308,7 +309,6 @@ async def parse_electronics(bot: Bot):
 
     logging.info(f"🕵️ Сканируем категорию: {cat_name}...")
     
-    # 🔥 Защита от зависания: таймаут 20 секунд на категорию
     try:
         clean_html, unique_links = await asyncio.wait_for(fetch_smart(url), timeout=20.0)
     except asyncio.TimeoutError:
@@ -387,6 +387,7 @@ async def background_scanner(bot: Bot):
                 await asyncio.sleep(1)
                 continue
 
+            state.last_activity_time = time.time()
             await parse_electronics(bot)
 
             pause_sec = random.randint(20, 38)
@@ -399,6 +400,30 @@ async def background_scanner(bot: Bot):
             state.last_error = str(e)[:120]
             logging.error(f"⚠️ Ошибка в сканере: {e}")
             await asyncio.sleep(10)
+
+# ================= 🛡️ СТОРОЖЕВОЙ ТАЙМЕР (САМОДИАГНОСТИКА) =================
+async def watchdog_monitor(bot: Bot):
+    while True:
+        await asyncio.sleep(60)  # Проверяем каждые 60 секунд
+        if not state.is_scanning:
+            continue
+        
+        # Если бот не подавал признаков активности дольше 3 минут (180 секунд)
+        if time.time() - state.last_activity_time > 180:
+            logging.warning("⚠️ СТОРОЖЕВОЙ ТАЙМЕР: Обнаружено зависание сканера! Провожу экстренный сброс...")
+            banned_proxies.clear()
+            state.last_activity_time = time.time()
+            state.target_idx = 0
+            
+            if state.active_chat_id:
+                try:
+                    await bot.send_message(
+                        chat_id=state.active_chat_id,
+                        text="🛡️ <b>Самодиагностика:</b> Обнаружена задержка сканирования. Очистил прокси-пул и перезапустил цикл!",
+                        parse_mode="HTML"
+                    )
+                except Exception:
+                    pass
 
 # ================= ХЕНДЛЕРЫ =================
 dp = Dispatcher()
@@ -414,31 +439,27 @@ def get_main_kb():
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    logging.info(f"📲 Нажата кнопка /start от пользователя {message.chat.id}")
     state.active_chat_id = message.chat.id
     state.is_scanning = True
     await message.answer(
-        f"🕵️ <b>Ультра-Снайпер 2026 запущен (Render Mode)!</b>\n"
-        f"Чат привязан: <code>{message.chat.id}</code> ✨\n\n"
-        f"Нажми <b>🧪 Тест отправки</b>, чтобы проверить доставку карточек!",
+        f"🕵️ <b>Ультра-Снайпер 2026 запущен (Самодиагностика активна)!</b>\n"
+        f"Чат привязан: <code>{message.chat.id}</code> ✨",
         parse_mode="HTML",
         reply_markup=get_main_kb(),
     )
 
 @dp.message(F.text.contains("Запустить"))
 async def start_scan(message: types.Message):
-    logging.info(f"📲 Нажата кнопка 'Запустить сканер' в чате {message.chat.id}")
     state.active_chat_id = message.chat.id
     state.is_scanning = True
     await message.answer(
-        f"🕵️ <b>Сканирование активно!</b> Отправляю лоты сюда (ID: <code>{message.chat.id}</code>) ✨",
+        f"🕵️ <b>Сканирование активно!</b> Самодиагностика следит за стабильностью 24/7 ✨",
         parse_mode="HTML",
         reply_markup=get_main_kb(),
     )
 
 @dp.message(F.text.contains("Остановить"))
 async def stop_scan(message: types.Message):
-    logging.info(f"📲 Нажата кнопка 'Остановить сканер' в чате {message.chat.id}")
     state.is_scanning = False
     await message.answer("⏸ <b>Сканер остановлен.</b> 🌸", parse_mode="HTML", reply_markup=get_main_kb())
 
@@ -448,15 +469,14 @@ async def test_send(message: types.Message):
     test_details = {
         "title": "Тестовый iPhone 16 Pro 256 ГБ (Проверка связи)",
         "image_url": None,
-        "description": "Если ты видишь эту карточку и кнопку ниже — доставка ссылок на Render работает на 100%!",
+        "description": "Самодиагностика работает! Карточка доставлена успешно.",
     }
     test_rule = {"name": "iPhone 16 Pro / Max", "max_buy": 72000, "market": 92000}
     await send_deal_card(bot=message.bot, chat_id=message.chat.id, details=test_details, price_val=55000, matched_rule=test_rule, full_url="https://www.avito.ru/kazan/telefony")
 
 @dp.message(F.text.contains("Статистика"))
 async def show_stats(message: types.Message):
-    logging.info(f"📲 Запрошена 'Статистика' в чате {message.chat.id}")
-    status = "🟢 Работает" if state.is_scanning else "🔴 На паузе"
+    status = "🟢 Работает (Самозащита ON)" if state.is_scanning else "🔴 На паузе"
     now = time.time()
     active_count = len([p for p in PROXY_LIST if p not in banned_proxies or banned_proxies[p] < now])
 
@@ -474,7 +494,7 @@ async def show_stats(message: types.Message):
 
 # ================= ВЕБ-СЕРВЕР ДЛЯ RENDER =================
 async def handle_ping(request):
-    return web.Response(text="Bot is running 24/7!")
+    return web.Response(text="Bot is running 24/7 with Self-Healing!")
 
 async def web_server():
     app = web.Application()
@@ -489,7 +509,8 @@ async def web_server():
 async def on_startup(bot: Bot):
     init_db()
     asyncio.create_task(background_scanner(bot))
-    logging.info("🕵️ Снайпер 2026 успешно стартовал в фоне на Render!")
+    asyncio.create_task(watchdog_monitor(bot))  # 🔥 Запускаем сторожевой таймер!
+    logging.info("🛡️ Снайпер 2026 запущен с системой самодиагностики и самовосстановления!")
 
 async def main():
     session = AiohttpSession(timeout=60)
