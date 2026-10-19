@@ -62,13 +62,12 @@ class ScannerState:
 
 state = ScannerState()
 
-# ================= 🗄️ БАЗА ДАННЫХ И КОМПЛЕКСНАЯ СХЕМА =================
+# ================= 🗄️ БАЗА ДАННЫХ =================
 def init_db():
     conn = sqlite3.connect(DB_PATH, timeout=10.0)
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("CREATE TABLE IF NOT EXISTS seen_ads (ad_id TEXT PRIMARY KEY)")
     
-    # Правила цен
     conn.execute("""
         CREATE TABLE IF NOT EXISTS price_rules (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -79,21 +78,6 @@ def init_db():
         )
     """)
     
-    # CRM сделок («В работе», «Избранное»)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS crm_deals (
-            ad_id TEXT PRIMARY KEY,
-            title TEXT,
-            price INTEGER,
-            market INTEGER,
-            url TEXT,
-            status TEXT DEFAULT 'В избранном',
-            note TEXT,
-            timestamp TEXT
-        )
-    """)
-
-    # Стоп-слова (черный список)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -101,7 +85,6 @@ def init_db():
         )
     """)
     
-    # Лог последних находок для Mini App
     conn.execute("""
         CREATE TABLE IF NOT EXISTS recent_findings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -130,7 +113,6 @@ def init_db():
         cur.executemany("INSERT OR IGNORE INTO price_rules (name, keys, max_buy, market) VALUES (?, ?, ?, ?)", default_rules)
         conn.commit()
 
-    # Дефолтные стоп-слова
     cur.execute("SELECT COUNT(*) FROM settings WHERE key='stop_words'")
     if cur.fetchone()[0] == 0:
         cur.execute("INSERT INTO settings (key, value) VALUES ('stop_words', 'чехол,стекло,кабель,аренда,скупка,копия,реплика,ремонт,запчасти,обмен')")
@@ -181,19 +163,17 @@ def mark_seen(ad_id: str, title: str = "", price: int = 0, market: int = 0, url:
                 "INSERT INTO recent_findings (title, price, market, url, category, time) VALUES (?, ?, ?, ?, ?, ?)",
                 (title, price, market, url, category, now_str)
             )
-            # Оставляем только последние 30 записей
             conn.execute("DELETE FROM recent_findings WHERE id NOT IN (SELECT id FROM recent_findings ORDER BY id DESC LIMIT 30)")
         conn.commit()
         conn.close()
     except Exception:
         pass
 
-# ================= 🤖 УМНЫЙ ИИ-АНАЛИТИК СДЕЛКИ =================
+# ================= 🤖 ИИ-АНАЛИТИК СДЕЛКИ =================
 def generate_ai_analytics(title: str, price: int, market: int, category: str) -> str:
     profit = market - price
     roi = int((profit / price) * 100) if price > 0 else 0
     
-    # Интеллектуальный вердикт ИИ
     if roi >= 40:
         verdict = "🔥 АБСОЛЮТНЫЙ ТОП (Сверхдоходный лот)"
         speed = "Уйдет за 1-3 часа. Хватай не раздумывая!"
@@ -204,20 +184,13 @@ def generate_ai_analytics(title: str, price: int, market: int, category: str) ->
         verdict = "💡 УМЕРЕННЫЙ ПРОФИТ (Торг обязателен)"
         speed = "Требует торга с продавцом для увеличения маржи."
 
-    tips = [
-        "💬 <b>Совет по торгу:</b> Напиши продавцу: «Готов забрать сегодня за наличные без долгих поездок, если уступишь 500-1000 ₽».",
-        "🔍 <b>Проверка при встрече:</b> Обязательно проверь серийный номер, работоспособность всех функций и отсутствие привязок к аккаунтам.",
-        "📦 <b>Ликвидность:</b> Товар пользуется высоким спросом в регионе, спрос стабильный."
-    ]
-
-    analysis = (
+    return (
         f"🤖 <b>AI-Аналитика & Рекомендации:</b>\n"
         f"• Вердикт: <b>{verdict}</b>\n"
         f"• Чистая прибыль: <b>+{profit:,} ₽ (ROI: {roi}%)</b>\n"
         f"• Прогнозируемая скорость перепродажи: {speed}\n\n"
-        f"{tips[0]}\n{tips[1]}"
+        f"💬 <b>Совет по торгу:</b> Предложи наличные при встрече за быстрый выкуп со скидкой."
     ).replace(",", " ")
-    return analysis
 
 # ================= КАТЕГОРИИ И ФИЛЬТРЫ =================
 TARGETS = {
@@ -280,12 +253,15 @@ def extract_card_details(raw_window: str, slug: str) -> dict:
     desc = html_lib.unescape(desc_match.group(1)).replace("\\n", " ").strip() if desc_match else "Свежее объявление в регионе."
     return {"title": title, "image_url": image_url, "description": desc[:300]}
 
-# ================= МНОГОПОТОЧНОЕ ЯДРО ЗАПРОСОВ =================
-def _sync_worker_fetch(url: str, proxy: str, headers: dict):
+# ================= 🔥 МНОГОПОТОЧНОЕ ЯДРО ЗАПРОСОВ =================
+def _sync_worker_fetch(url: str, proxy: str, headers: dict, region: str):
     resp = cffi_requests.get(url, headers=headers, proxies={"http": proxy, "https": proxy}, impersonate="chrome", timeout=(2.5, 3.5))
     if resp.status_code == 200 and len(resp.text) > 15000:
-        return resp.text
-    return None
+        clean_html = normalize_html(resp.text)
+        unique_links = extract_links_from_html(clean_html, region)
+        if unique_links:
+            return clean_html, unique_links
+    return None, []
 
 async def fetch_smart(url: str, region: str):
     now = time.time()
@@ -309,16 +285,15 @@ async def fetch_smart(url: str, region: str):
         port_str = proxy.split(':')[-1]
         state.last_activity_time = time.time()
         try:
-            future = loop.run_in_executor(ThreadPool, _sync_worker_fetch, url, proxy, headers)
-            raw_text = await asyncio.wait_for(future, timeout=4.0)
-            if raw_text:
-                clean_html = normalize_html(raw_text)
-                unique_links = extract_links_from_html(clean_html, region)
-                if unique_links:
-                    state.current_ip = f"Порт {port_str}"
-                    state.last_activity_time = time.time()
-                    return clean_html, unique_links
-            banned_proxies[proxy] = now + 300
+            future = loop.run_in_executor(ThreadPool, _sync_worker_fetch, url, proxy, headers, region)
+            clean_html, unique_links = await asyncio.wait_for(future, timeout=4.0)
+            if clean_html and unique_links:
+                state.current_ip = f"Порт {port_str}"
+                state.last_activity_time = time.time()
+                logging.info(f"📄 Успех на порту {port_str}! Найдено карточек: {len(unique_links)}")
+                return clean_html, unique_links
+            else:
+                banned_proxies[proxy] = now + 300
         except Exception:
             banned_proxies[proxy] = now + 300
     return None, []
@@ -332,7 +307,7 @@ async def send_deal_card(bot: Bot, chat_id: int, details: dict, price_val: int, 
     caption = (
         f"<b>{html_lib.escape(details['title'])}</b>\n"
         f"💵 <b>{price_val:,} ₽</b>  <i>(Рынок: ~{matched_rule['market']:,} ₽ | 🔥 +{profit:,} ₽)</i>\n"
-        f"🌍 Регион: {state.current_user_region if hasattr(state, 'current_user_region') else 'Казань'}\n\n"
+        f"🌍 Регион: {state.current_region}\n\n"
         f"<blockquote>{html_lib.escape(details['description'])}</blockquote>\n\n"
         f"{ai_text}\n\n"
         f"🔗 <a href=\"{full_url}\">Прямая ссылка на Авито</a>\n"
@@ -449,7 +424,7 @@ def hardware_kernel_watchdog():
         if time.time() - state.last_activity_time > 90:
             os._exit(1)
 
-# ================= 🌐 WEB-СЕРВЕР И ПОЛНОЦЕННЫЙ MINI APP =================
+# ================= 🌐 WEB-СЕРВЕР И MINI APP =================
 async def handle_webapp(request):
     html_content = """
     <!DOCTYPE html>
@@ -494,10 +469,9 @@ async def handle_webapp(request):
         </div>
 
         <div class="card">
-            <h3>📊 Статистика & График</h3>
+            <h3>📊 Статистика</h3>
             <p>Проверено лотов: <span id="checked">0</span></p>
             <p>Найдено выгодных: <span id="found">0</span></p>
-            <canvas id="statsChart" width="400" height="150" style="margin-top:10px;"></canvas>
         </div>
 
         <div class="card">
@@ -537,13 +511,6 @@ async def handle_webapp(request):
         <script>
             let tg = window.Telegram.WebApp;
             tg.expand();
-
-            let ctx = document.getElementById('statsChart').getContext('2d');
-            let statsChart = new Chart(ctx, {
-                type: 'line',
-                label: 'Находки',
-                data: { labels: ['10м назад', '5м назад', 'Сейчас'], datasets: [{ label: 'Выгодные лоты', data: [0, 0, 0], borderColor: '#2ea6ff', tension: 0.1 }] }
-            });
 
             async function loadData() {
                 let res = await fetch('/api/stats');
