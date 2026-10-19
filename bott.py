@@ -195,17 +195,17 @@ def generate_ai_analytics(title: str, price: int, market: int, category: str) ->
 # ================= КАТЕГОРИИ И ФИЛЬТРЫ =================
 TARGETS = {
     "kazan": [
-        ("Телефоны", "https://m.avito.ru/kazan/telefony?s=104"),
-        ("Приставки и игры", "https://m.avito.ru/kazan/igry_pristavki_i_programmy?s=104"),
-        ("Ноутбуки", "https://m.avito.ru/kazan/noutbuki?s=104"),
-        ("Планшеты", "https://m.avito.ru/kazan/planshety_i_elektronnye_knigi?s=104"),
-        ("Аудио и видео", "https://m.avito.ru/kazan/audio_i_video?s=104"),
-        ("Бытовая техника", "https://m.avito.ru/kazan/bytovaya_tehnika?s=104"),
-        ("Товары для ПК", "https://m.avito.ru/kazan/tovary_dlya_kompyutera?s=104"),
+        ("Телефоны", "https://www.avito.ru/kazan/telefony?s=104"),
+        ("Приставки и игры", "https://www.avito.ru/kazan/igry_pristavki_i_programmy?s=104"),
+        ("Ноутбуки", "https://www.avito.ru/kazan/noutbuki?s=104"),
+        ("Планшеты", "https://www.avito.ru/kazan/planshety_i_elektronnye_knigi?s=104"),
+        ("Аудио и видео", "https://www.avito.ru/kazan/audio_i_video?s=104"),
+        ("Бытовая техника", "https://www.avito.ru/kazan/bytovaya_tehnika?s=104"),
+        ("Товары для ПК", "https://www.avito.ru/kazan/tovary_dlya_kompyutera?s=104"),
     ],
     "innopolis": [
-        ("Телефоны", "https://m.avito.ru/innopolis/telefony?s=104"),
-        ("Приставки и игры", "https://m.avito.ru/innopolis/igry_pristavki_i_programmy?s=104"),
+        ("Телефоны", "https://www.avito.ru/innopolis/telefony?s=104"),
+        ("Приставки и игры", "https://www.avito.ru/innopolis/igry_pristavki_i_programmy?s=104"),
     ]
 }
 
@@ -272,14 +272,20 @@ async def fetch_smart(url: str, region: str):
 
     random.shuffle(available)
     headers = {
-        "User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
         "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Cache-Control": "no-cache",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Cache-Control": "max-age=0",
     }
     loop = asyncio.get_running_loop()
 
-    # 🔥 Проверяем сразу до 15 прокси параллельно для мгновенного старта
     for proxy in available[:15]:
         if not state.is_scanning:
             break
@@ -287,7 +293,7 @@ async def fetch_smart(url: str, region: str):
         state.last_activity_time = time.time()
         try:
             future = loop.run_in_executor(ThreadPool, _sync_worker_fetch, url, proxy, headers, region)
-            clean_html, unique_links = await asyncio.wait_for(future, timeout=3.5)
+            clean_html, unique_links = await asyncio.wait_for(future, timeout=4.0)
             if clean_html and unique_links:
                 state.current_ip = f"Порт {port_str}"
                 state.last_activity_time = time.time()
@@ -444,6 +450,7 @@ async def handle_webapp(request):
             input, select { background: #2a2a2a; color: #fff; }
             button { background: var(--tg-theme-button-color, #2ea6ff); color: var(--tg-theme-button-text-color, #fff); font-weight: bold; cursor: pointer; }
             .btn-danger { background: #ff4d4d !important; }
+            .btn-test { background: #4caf50 !important; margin-top: 8px; }
             .row { display: flex; gap: 8px; }
             .finding-item { border-bottom: 1px solid #333; padding: 8px 0; font-size: 12px; }
         </style>
@@ -457,6 +464,7 @@ async def handle_webapp(request):
                 <button onclick="toggleScan(true)">▶️ Запустить</button>
                 <button class="btn-danger" onclick="toggleScan(false)">⏹ Стоп</button>
             </div>
+            <button class="btn-test" onclick="sendTestCard()">🧪 Тест: прислать тестовую карточку</button>
             <button style="background:#ff9800; margin-top:8px;" onclick="restartKernel()">🔄 Перезагрузить движок</button>
             <p>Статус: <span id="scanStatus" style="font-weight:bold; color:#4caf50;">Активен</span></p>
         </div>
@@ -534,6 +542,12 @@ async def handle_webapp(request):
                 loadData();
             }
 
+            async function sendTestCard() {
+                let res = await fetch('/api/test_card');
+                if(res.ok) { alert('Тестовая карточка успешно отправлена в чат!'); }
+                else { alert('Ошибка отправки теста.'); }
+            }
+
             async function restartKernel() {
                 if(confirm('Перезагрузить ядро бота?')) {
                     await fetch('/api/restart');
@@ -601,6 +615,19 @@ async def api_region(request):
         state.current_region = val
     return web.json_response({"status": "ok"})
 
+async def api_test_card(request):
+    global global_bot_instance
+    if global_bot_instance and state.active_chat_id:
+        dummy_details = {
+            "title": "🧪 Тестовый iPhone 16 Pro Max 256GB (Идеальное состояние)",
+            "image_url": "https://www.avito.st/s/v1/widget/iphone.jpg",
+            "description": "Это тестовая карточка для проверки отправки сообщений, ссылок и ИИ-аналитики в вашем снайпере «24 сервер»!"
+        }
+        dummy_rule = {"name": "Смартфоны", "market": 85000}
+        await send_deal_card(global_bot_instance, state.active_chat_id, dummy_details, 59000, dummy_rule, "https://www.avito.ru/kazan")
+        return web.json_response({"status": "ok"})
+    return web.json_response({"status": "error"}, status=400)
+
 async def api_restart(request):
     os._exit(1)
 
@@ -660,6 +687,7 @@ async def handle_ping(request):
 
 # ================= ХЕНДЛЕРЫ TELEGRAM =================
 dp = Dispatcher()
+global_bot_instance = None
 
 def get_main_kb():
     webapp_button = InlineKeyboardButton(text="⚙️ Управление & AI (Mini App)", web_app=WebAppInfo(url=WEBAPP_URL))
@@ -716,28 +744,28 @@ async def show_stats(message: types.Message):
 
 # ================= ЗАПУСК СИСТЕМЫ =================
 async def main():
+    global global_bot_instance
     init_db()
     
-    # Запуск фонового Watchdog
     wd_thread = threading.Thread(target=hardware_kernel_watchdog, daemon=True, name="HardwareWatchdog")
     wd_thread.start()
 
     session = AiohttpSession(timeout=30)
     bot = Bot(token=BOT_TOKEN, session=session, default=DefaultBotProperties(parse_mode="HTML"))
+    global_bot_instance = bot
 
-    # Очищаем старые вебхуки от конфликтов
     try:
         await bot.delete_webhook(drop_pending_updates=True)
     except Exception:
         pass
 
-    # Запускаем веб-сервер aiohttp на порту Render
     app = web.Application()
     app.router.add_get("/", handle_ping)
     app.router.add_get("/webapp", handle_webapp)
     app.router.add_get("/api/stats", api_stats)
     app.router.add_get("/api/toggle", api_toggle)
     app.router.add_get("/api/region", api_region)
+    app.router.add_get("/api/test_card", api_test_card)
     app.router.add_get("/api/restart", api_restart)
     app.router.add_get("/api/findings", api_findings)
     app.router.add_post("/api/rules", api_rules_post)
@@ -750,7 +778,6 @@ async def main():
     await site.start()
     logging.info(f"🌐 Веб-сервер и Ultimate Mini App успешно запущены на порту {PORT}")
 
-    # Запускаем фоновый сканер Авито
     asyncio.create_task(background_scanner(bot))
     logging.info("🛡️ Снайпер 24 Ultimate с ИИ-аналитиком запущен!")
 
