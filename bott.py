@@ -32,6 +32,7 @@ DEFAULT_CHAT_ID = 1128246797
 
 # 🔥 Точный пул из указанных 100 прокси (10000 - 10099)
 PROXY_LIST = [f"http://W3KAbVZ7rM:ruTTPneIyG@proxy.proxyma.io:{p}" for p in range(10000, 10100)]
+# Храним время бана прокси (очищаем от старых записей для экономии памяти)
 banned_proxies = {}
 
 logging.basicConfig(
@@ -56,7 +57,7 @@ state = ScannerState()
 
 # ================= БАЗА =================
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("CREATE TABLE IF NOT EXISTS seen_ads (ad_id TEXT PRIMARY KEY)")
     conn.commit()
@@ -64,24 +65,23 @@ def init_db():
 
 def is_seen(ad_id: str) -> bool:
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=10)
         cur = conn.cursor()
         cur.execute("SELECT 1 FROM seen_ads WHERE ad_id = ?", (ad_id,))
         row = cur.fetchone()
         conn.close()
         return row is not None
     except Exception:
-        init_db()
         return False
 
 def mark_seen(ad_id: str):
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=10)
         conn.execute("INSERT OR IGNORE INTO seen_ads (ad_id) VALUES (?)", (ad_id,))
         conn.commit()
         conn.close()
     except Exception:
-        init_db()
+        pass
 
 # ================= КАТЕГОРИИ И АКТУАЛЬНЫЙ РЫНОК КАЗАНИ =================
 TARGETS = [
@@ -229,6 +229,13 @@ def extract_card_details(raw_window: str, slug: str) -> dict:
 
 async def fetch_smart(url: str):
     now = time.time()
+    
+    # Очистка банов, чтобы словарь не разрастался
+    if len(banned_proxies) > 500:
+        for k in list(banned_proxies.keys()):
+            if banned_proxies[k] < now:
+                del banned_proxies[k]
+
     available = [p for p in PROXY_LIST if p not in banned_proxies or banned_proxies[p] < now]
 
     if not available:
@@ -248,23 +255,30 @@ async def fetch_smart(url: str):
             break
         port_str = proxy.split(':')[-1]
         try:
-            async with AsyncSession(impersonate="chrome", proxies={"http": proxy, "https": proxy}) as session:
-                resp = await session.get(url, headers=headers, timeout=4.0)
+            # ЖЕСТКИЙ ТАЙМАУТ НА ВЕСЬ ПРОЦЕСС ЗАПРОСА (включая установку соединения)
+            async def _do_request():
+                async with AsyncSession(impersonate="chrome", proxies={"http": proxy, "https": proxy}) as session:
+                    return await session.get(url, headers=headers, timeout=4.0)
 
-                if resp.status_code == 200 and len(resp.text) > 15000:
-                    clean_html = normalize_html(resp.text)
-                    unique_links = extract_links_from_html(clean_html)
+            resp = await asyncio.wait_for(_do_request(), timeout=6.0)
 
-                    if not unique_links:
-                        banned_proxies[proxy] = now + 600
-                        continue
+            if resp.status_code == 200 and len(resp.text) > 15000:
+                clean_html = normalize_html(resp.text)
+                unique_links = extract_links_from_html(clean_html)
 
-                    state.current_ip = f"Порт {port_str}"
-                    state.last_activity_time = time.time()
-                    logging.info(f"📄 Успех на порту {port_str}! Найдено карточек Казани: {len(unique_links)}")
-                    return clean_html, unique_links
-                else:
-                    banned_proxies[proxy] = now + 300
+                if not unique_links:
+                    banned_proxies[proxy] = now + 600
+                    continue
+
+                state.current_ip = f"Порт {port_str}"
+                state.last_activity_time = time.time()
+                logging.info(f"📄 Успех на порту {port_str}! Найдено карточек Казани: {len(unique_links)}")
+                return clean_html, unique_links
+            else:
+                banned_proxies[proxy] = now + 300
+        except asyncio.TimeoutError:
+            banned_proxies[proxy] = now + 300
+            logging.warning(f"⏰ Прокси {port_str} завис (Таймаут 6с), бан на 5 мин.")
         except Exception:
             banned_proxies[proxy] = now + 300
 
@@ -311,10 +325,10 @@ async def parse_electronics(bot: Bot):
     logging.info(f"🕵️ Сканируем категорию: {cat_name}...")
     
     try:
-        task = asyncio.create_task(fetch_smart(url))
-        clean_html, unique_links = await asyncio.wait_for(task, timeout=18.0)
+        # Защита от зависания на 20 секунд
+        clean_html, unique_links = await asyncio.wait_for(fetch_smart(url), timeout=20.0)
     except asyncio.TimeoutError:
-        logging.warning(f"⏰ Таймаут сканирования '{cat_name}', прокси завис, идем дальше...")
+        logging.warning(f"⏰ Таймаут сканирования '{cat_name}', идем дальше...")
         return
     except Exception as e:
         state.last_error = f"Fetch error: {e}"[:120]
@@ -390,7 +404,9 @@ async def background_scanner(bot: Bot):
                 continue
 
             state.last_activity_time = time.time()
-            await parse_electronics(bot)
+            
+            # Запускаем сканирование с жестким таймаутом, чтобы не повесить цикл
+            await asyncio.wait_for(parse_electronics(bot), timeout=45.0)
 
             pause_sec = random.randint(20, 38)
             logging.info(f"⏳ Пауза {pause_sec} сек перед следующей категорией...")
@@ -401,32 +417,40 @@ async def background_scanner(bot: Bot):
                 await asyncio.sleep(1)
                 state.last_activity_time = time.time()
                 
+        except asyncio.TimeoutError:
+            state.last_error = "Глобальный таймаут цикла сканирования"
+            logging.warning("⏰ Цикл сканирования превысил 45 секунд, принудительно прерван.")
+            await asyncio.sleep(5)
         except Exception as e:
             state.last_error = str(e)[:120]
             logging.error(f"⚠️ Ошибка в фоновом сканере: {e}")
             await asyncio.sleep(10)
 
-# ================= 🛡️ СТОРОЖЕВОЙ ТАЙМЕР С АВТОПЕРЕЗАПУСКОМ ПРОЦЕССА =================
+# ================= 🛡️ СТОРОЖЕВОЙ ТАЙМЕР =================
 async def watchdog_monitor(bot: Bot):
     while True:
-        await asyncio.sleep(45)
+        await asyncio.sleep(60) # Проверка раз в минуту
+        
         if not state.is_scanning:
             continue
         
-        if time.time() - state.last_activity_time > 120:
-            logging.warning("⚠️ СТОРОЖЕВОЙ ТАЙМЕР: Полное зависание потока! Перезапускаю скрипт...")
+        # Если бот активен, но активность не обновлялась более 3 минут
+        if time.time() - state.last_activity_time > 180:
+            logging.critical("🚨 СТОРОЖЕВОЙ ТАЙМЕР: Полное зависание потока! Аварийное завершение для перезапуска Render...")
             if state.active_chat_id:
                 try:
-                    await bot.send_message(
+                    # Пытаемся отправить сообщение (с коротким таймаутом)
+                    await asyncio.wait_for(bot.send_message(
                         chat_id=state.active_chat_id,
-                        text="🛡️ <b>Самодиагностика:</b> Завис сетевой сокет. Перезапускаю процесс снайпера в облаке!",
+                        text="🛡️ <b>Самодиагностика:</b> Зафиксировано критическое зависание. Render перезапустит контейнер.",
                         parse_mode="HTML"
-                    )
+                    ), timeout=5.0)
                 except Exception:
                     pass
             
-            # 🔥 Жесткий автоперезапуск процесса
-            os.execv(sys.executable, [sys.executable] + sys.argv)
+            # 🔥 ВАЖНО: На Render os.execv часто вешает контейнер.
+            # Правильный способ - завершить процесс с ошибкой, Render поднимет его заново.
+            os._exit(1) 
 
 # ================= ХЕНДЛЕРЫ =================
 dp = Dispatcher()
@@ -444,8 +468,9 @@ def get_main_kb():
 async def cmd_start(message: types.Message):
     state.active_chat_id = message.chat.id
     state.is_scanning = True
+    state.last_activity_time = time.time()
     await message.answer(
-        f"🕵️ <b>Ультра-Снайпер 2026 запущен (Автоперезапуск активен)!</b>\n"
+        f"🕵️ <b>Ультра-Снайпер 2026 запущен (Автоперезапуск Render активен)!</b>\n"
         f"Чат привязан: <code>{message.chat.id}</code> ✨",
         parse_mode="HTML",
         reply_markup=get_main_kb(),
@@ -455,6 +480,7 @@ async def cmd_start(message: types.Message):
 async def start_scan(message: types.Message):
     state.active_chat_id = message.chat.id
     state.is_scanning = True
+    state.last_activity_time = time.time()
     await message.answer(
         f"🕵️ <b>Сканирование активно!</b> Сторожевой таймер следит за процессом 24/7 ✨",
         parse_mode="HTML",
@@ -513,7 +539,7 @@ async def on_startup(bot: Bot):
     init_db()
     asyncio.create_task(background_scanner(bot))
     asyncio.create_task(watchdog_monitor(bot))
-    logging.info("🛡️ Снайпер 2026 запущен с функцией автоматического перезапуска при зависании!")
+    logging.info("🛡️ Снайпер 2026 запущен с функцией автоматического перезапуска!")
 
 async def main():
     session = AiohttpSession(timeout=60)
