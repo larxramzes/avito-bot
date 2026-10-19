@@ -242,13 +242,13 @@ async def fetch_smart(url: str):
         "Cache-Control": "no-cache",
     }
 
-    for proxy in available[:15]:
+    for proxy in available[:12]:
         if not state.is_scanning:
             break
         port_str = proxy.split(':')[-1]
         try:
             async with AsyncSession(impersonate="chrome", proxies={"http": proxy, "https": proxy}) as session:
-                resp = await session.get(url, headers=headers, timeout=6.0)
+                resp = await session.get(url, headers=headers, timeout=4.0)
 
                 if resp.status_code == 200 and len(resp.text) > 15000:
                     clean_html = normalize_html(resp.text)
@@ -310,7 +310,7 @@ async def parse_electronics(bot: Bot):
     logging.info(f"🕵️ Сканируем категорию: {cat_name}...")
     
     try:
-        clean_html, unique_links = await asyncio.wait_for(fetch_smart(url), timeout=20.0)
+        clean_html, unique_links = await asyncio.wait_for(fetch_smart(url), timeout=15.0)
     except asyncio.TimeoutError:
         logging.warning(f"⏰ Таймаут сканирования '{cat_name}', прокси завис, идем дальше...")
         return
@@ -379,7 +379,7 @@ async def parse_electronics(bot: Bot):
 
     logging.info(f"📊 Итог '{cat_name}': новых проверено {new_checked} | отправлено в чат: {matched_in_pass} (Всего проверено: {state.stats_checked})")
 
-# ================= ФОН =================
+# ================= ФОН С НЕБЛОКИРУЮЩЕЙ ПАУЗОЙ =================
 async def background_scanner(bot: Bot):
     while True:
         try:
@@ -392,10 +392,13 @@ async def background_scanner(bot: Bot):
 
             pause_sec = random.randint(20, 38)
             logging.info(f"⏳ Пауза {pause_sec} сек перед следующей категорией...")
+            
             for _ in range(pause_sec):
-                if not state.is_scanning:
+                if not state.is_scanning or not state.active_chat_id:
                     break
                 await asyncio.sleep(1)
+                state.last_activity_time = time.time()
+                
         except Exception as e:
             state.last_error = str(e)[:120]
             logging.error(f"⚠️ Ошибка в фоновом сканере: {e}")
@@ -441,7 +444,7 @@ async def cmd_start(message: types.Message):
     state.active_chat_id = message.chat.id
     state.is_scanning = True
     await message.answer(
-        f"🕵️ <b>Ультра-Снайпер 2026 запущен (Асинхронные кнопки + Самозащита)!</b>\n"
+        f"🕵️ <b>Ультра-Снайпер 2026 запущен (Неблокирующие паузы + Самозащита)!</b>\n"
         f"Чат привязан: <code>{message.chat.id}</code> ✨",
         parse_mode="HTML",
         reply_markup=get_main_kb(),
@@ -468,7 +471,7 @@ async def test_send(message: types.Message):
     test_details = {
         "title": "Тестовый iPhone 16 Pro 256 ГБ (Проверка связи)",
         "image_url": None,
-        "description": "Кнопки работают мгновенно, рынок актуализирован!",
+        "description": "Кнопки работают мгновенно, паузы не блокируют поток!",
     }
     test_rule = {"name": "iPhone 16 Pro / Max", "max_buy": 62000, "market": 79000}
     await send_deal_card(bot=message.bot, chat_id=message.chat.id, details=test_details, price_val=55000, matched_rule=test_rule, full_url="https://www.avito.ru/kazan/telefony")
@@ -493,7 +496,7 @@ async def show_stats(message: types.Message):
 
 # ================= ВЕБ-СЕРВЕР ДЛЯ RENDER =================
 async def handle_ping(request):
-    return web.Response(text="Bot is running 24/7 with Async UI & Self-Healing!")
+    return web.Response(text="Bot is running 24/7 with Non-Blocking Pauses & Self-Healing!")
 
 async def web_server():
     app = web.Application()
@@ -509,7 +512,7 @@ async def on_startup(bot: Bot):
     init_db()
     asyncio.create_task(background_scanner(bot))
     asyncio.create_task(watchdog_monitor(bot))
-    logging.info("🛡️ Снайпер 2026 запущен с асинхронными кнопками и сторожевым таймером!")
+    logging.info("🛡️ Снайпер 2026 успешно запущен с неблокирующими паузами!")
 
 async def main():
     session = AiohttpSession(timeout=60)
