@@ -714,7 +714,23 @@ async def show_stats(message: types.Message):
     await message.answer(text, parse_mode="HTML", reply_markup=kb_inline)
 
 # ================= ЗАПУСК СИСТЕМЫ =================
-async def web_server():
+async def main():
+    init_db()
+    
+    # Запуск фонового Watchdog
+    wd_thread = threading.Thread(target=hardware_kernel_watchdog, daemon=True, name="HardwareWatchdog")
+    wd_thread.start()
+
+    session = AiohttpSession(timeout=30)
+    bot = Bot(token=BOT_TOKEN, session=session, default=DefaultBotProperties(parse_mode="HTML"))
+
+    # Очищаем старые вебхуки от конфликтов
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+    except Exception:
+        pass
+
+    # Запускаем веб-сервер aiohttp на порту Render
     app = web.Application()
     app.router.add_get("/", handle_ping)
     app.router.add_get("/webapp", handle_webapp)
@@ -731,26 +747,18 @@ async def web_server():
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
-    logging.info(f"🌐 Веб-сервер и Ultimate Mini App запущены на порту {PORT}")
+    logging.info(f"🌐 Веб-сервер и Ultimate Mini App успешно запущены на порту {PORT}")
 
-async def on_startup(bot: Bot):
-    init_db()
-    wd_thread = threading.Thread(target=hardware_kernel_watchdog, daemon=True, name="HardwareWatchdog")
-    wd_thread.start()
+    # Запускаем фоновый сканер Авито
     asyncio.create_task(background_scanner(bot))
     logging.info("🛡️ Снайпер 24 Ultimate с ИИ-аналитиком запущен!")
 
-async def main():
-    session = AiohttpSession(timeout=30)
-    bot = Bot(token=BOT_TOKEN, session=session, default=DefaultBotProperties(parse_mode="HTML"))
-
-    await web_server()
-    await on_startup(bot)
-
     while True:
         try:
+            logging.info("🚀 Запуск Telegram Polling...")
             await dp.start_polling(bot, handle_signals=False)
-        except Exception:
+        except Exception as e:
+            logging.error(f"⚠️ Ошибка связи с Telegram: {e}. Переподключение через 5 секунд...")
             await asyncio.sleep(5)
 
 if __name__ == "__main__":
