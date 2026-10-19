@@ -26,16 +26,13 @@ BOT_TOKEN = "8968394996:AAEpGiADwUoqHZ1KqCA1MllKhFOXOF6OA10"
 DB_PATH = "safe_items.db"
 PORT = int(os.environ.get("PORT", 10000))
 
-# 🔥 ПУЛ ИЗ 1000 ПРОКСИ
 PROXY_LIST = [f"http://W3KAbVZ7rM:ruTTPneIyG@proxy.proxyma.io:{p}" for p in range(10000, 11000)]
 banned_proxies = {}
 
-# 🔇 Глушим спам от сетевых ошибок aiogram
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logging.getLogger("aiogram.dispatcher").setLevel(logging.CRITICAL)
 logging.getLogger("aiogram.event").setLevel(logging.CRITICAL)
 
-# ================= СОСТОЯНИЕ =================
 @dataclass
 class ScannerState:
     active_chat_id: int | None = None
@@ -47,7 +44,6 @@ class ScannerState:
 
 state = ScannerState()
 
-# ================= БАЗА =================
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     conn.execute("PRAGMA journal_mode=WAL;")
@@ -76,7 +72,6 @@ def mark_seen(ad_id: str):
     except Exception:
         init_db()
 
-# ================= КАСКАД КАТЕГОРИЙ И ЦЕНЫ =================
 TARGETS = [
     ("Телефоны", "https://m.avito.ru/kazan/telefony?s=104"),
     ("Приставки и игры", "https://m.avito.ru/kazan/igry_pristavki_i_programmy?s=104"),
@@ -167,7 +162,6 @@ SCAM_WORDS = [
     "донор", "разбита матрица", "не включается", "сломан экран", "битый экран", "в лизинг"
 ]
 
-# ================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =================
 def normalize_html(raw_html: str) -> str:
     text = html_lib.unescape(raw_html)
     text = (
@@ -343,7 +337,13 @@ async def parse_electronics(bot: Bot):
                         await bot.send_message(chat_id=state.active_chat_id, text=caption, parse_mode="HTML", reply_markup=kb)
                     logging.info(f"🚀 ОТПРАВЛЕНО В ЧАТ: {details['title']} за {price_val} ₽!")
                 except Exception as e:
-                    logging.warning(f"⚠️ Ошибка отправки в ТГ: {e}")
+                    # 🔥 ЕСЛИ КАРТИНКА НЕ ОТПРАВИЛАСЬ, ШЛЕМ ТОЛЬКО ТЕКСТ, А НЕ СГОРАЕМ В ТИШИНЕ!
+                    logging.warning(f"⚠️ Ошибка отправки фото, шлю текстом: {e}")
+                    try:
+                        await bot.send_message(chat_id=state.active_chat_id, text=caption, parse_mode="HTML", reply_markup=kb)
+                        logging.info(f"🚀 ОТПРАВЛЕНО В ЧАТ (ТЕКСТОМ): {details['title']} за {price_val} ₽!")
+                    except Exception as e2:
+                        logging.error(f"❌ Критическая ошибка отправки в ТГ: {e2}")
 
 # ================= ФОН =================
 async def background_scanner(bot: Bot):
@@ -432,10 +432,7 @@ async def main():
     session = AiohttpSession(timeout=60)
     bot = Bot(token=BOT_TOKEN, session=session, default=DefaultBotProperties(parse_mode="HTML"))
 
-    # Запускаем веб-сервер для Render
     await web_server()
-    
-    # Запускаем сканер в фоне
     await on_startup(bot)
 
     while True:
