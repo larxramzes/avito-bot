@@ -49,7 +49,7 @@ class ScannerState:
     current_ip: str = "Определяется..."
     target_idx: int = 0
     last_error: str = "Нет ошибок"
-    last_activity_time: float = time.time()  # 🔥 Для сторожевого таймера
+    last_activity_time: float = time.time()
 
 state = ScannerState()
 
@@ -82,7 +82,7 @@ def mark_seen(ad_id: str):
     except Exception:
         init_db()
 
-# ================= КАТЕГОРИИ И МАТРИЦА ЦЕН =================
+# ================= КАТЕГОРИИ И АКТУАЛЬНЫЙ РЫНОК КАЗАНИ =================
 TARGETS = [
     ("Телефоны", "https://m.avito.ru/kazan/telefony?s=104"),
     ("Приставки и игры", "https://m.avito.ru/kazan/igry_pristavki_i_programmy?s=104"),
@@ -94,63 +94,63 @@ TARGETS = [
 ]
 
 PRICE_RULES = [
-    {"name": "Геймпад DualSense / Xbox", "keys": ["dualsense", "дуалсенс", "геймпад ps5", "геймпад xbox", "джойстик ps5"], "max_buy": 3500, "market": 5500},
-    {"name": "iPhone 18 Pro / Max", "keys": ["18_pro", "18 pro", "18pro", "18_promax"], "max_buy": 95000, "market": 125000},
-    {"name": "iPhone 18 / Plus / Air", "keys": ["iphone_18", "iphone 18", "айфон 18"], "max_buy": 70000, "market": 92000},
-    {"name": "iPhone 17 Pro / Max", "keys": ["17_pro", "17 pro", "17pro", "17_promax"], "max_buy": 82000, "market": 105000},
-    {"name": "iPhone 17 / Air / Plus", "keys": ["iphone_17", "iphone 17", "айфон 17", "17_air", "17 air"], "max_buy": 58000, "market": 76000},
-    {"name": "iPhone 16 Pro / Max", "keys": ["16_pro", "16 pro", "16pro", "16_promax"], "max_buy": 72000, "market": 92000},
-    {"name": "iPhone 16 / Plus / 16e", "keys": ["iphone_16", "iphone 16", "айфон 16", "16_plus", "16e"], "max_buy": 48000, "market": 64000},
-    {"name": "iPhone 15 Pro / Max", "keys": ["15_pro", "15 pro", "15pro", "15_promax"], "max_buy": 56000, "market": 74000},
-    {"name": "iPhone 15 / Plus", "keys": ["iphone_15", "iphone 15", "айфон 15"], "max_buy": 40000, "market": 53000},
-    {"name": "iPhone 14 Pro / Max", "keys": ["14_pro", "14 pro", "14pro", "14_promax"], "max_buy": 44000, "market": 58000},
-    {"name": "iPhone 14 / Plus", "keys": ["iphone_14", "iphone 14", "айфон 14"], "max_buy": 31000, "market": 42000},
-    {"name": "iPhone 13 Pro / Max", "keys": ["13_pro", "13 pro", "13pro", "13_promax"], "max_buy": 34000, "market": 46000},
-    {"name": "iPhone 13 / Mini", "keys": ["iphone_13", "iphone 13", "айфон 13"], "max_buy": 24000, "market": 33000},
-    {"name": "iPhone 12 Pro / Max", "keys": ["12_pro", "12 pro", "12pro", "12_promax"], "max_buy": 23000, "market": 32000},
-    {"name": "iPhone 12 / Mini", "keys": ["iphone_12", "iphone 12", "айфон 12"], "max_buy": 16500, "market": 23500},
-    {"name": "iPhone 11 Pro / Max", "keys": ["11_pro", "11 pro", "11pro"], "max_buy": 15500, "market": 22500},
-    {"name": "iPhone 11", "keys": ["iphone_11", "iphone 11", "айфон 11"], "max_buy": 12500, "market": 18500},
-    {"name": "iPhone XS / XR / SE 2022", "keys": ["iphone_xr", "iphone xr", "айфон хр", "iphone_xs", "iphone xs", "iphone se 2022", "iphone_se_2022", "iphone se 3"], "max_buy": 9500, "market": 14500},
-    {"name": "Samsung S25 / S26 Ultra", "keys": ["s25_ultra", "s26_ultra", "s25 ultra", "s26 ultra"], "max_buy": 65000, "market": 88000},
-    {"name": "Samsung S25 / S26 / Fold 6-7", "keys": ["galaxy_s25", "galaxy_s26", "galaxy s25", "galaxy s26", "fold_6", "fold_7", "fold 6", "fold 7", "flip_6", "flip 6"], "max_buy": 45000, "market": 64000},
-    {"name": "Samsung S23 / S24 Ultra", "keys": ["s23_ultra", "s24_ultra", "s23 ultra", "s24 ultra"], "max_buy": 45000, "market": 64000},
-    {"name": "Samsung S23 / S24 / Fold 4-5 / Flip", "keys": ["galaxy_s23", "galaxy_s24", "galaxy s23", "galaxy s24", "z_fold", "z_flip", "z fold", "z flip", "s24 fe", "s23 fe"], "max_buy": 30000, "market": 45000},
-    {"name": "Samsung S21 / S22 / Ultra / FE", "keys": ["galaxy_s21", "galaxy_s22", "galaxy s21", "galaxy s22", "s21_fe", "s21 fe", "s22_ultra", "s22 ultra"], "max_buy": 20000, "market": 29000},
-    {"name": "OnePlus 15 / 14 / 13", "keys": ["oneplus_15", "oneplus_14", "oneplus_13", "oneplus 15", "oneplus 14", "oneplus 13", "ванплас 15", "ванплас 14", "ванплас 13"], "max_buy": 45000, "market": 62000},
-    {"name": "Xiaomi 15 / 16 / Ultra", "keys": ["xiaomi_15", "xiaomi_16", "xiaomi 15", "xiaomi 16", "14_ultra", "14 ultra", "15_ultra", "15 ultra"], "max_buy": 38000, "market": 55000},
-    {"name": "Xiaomi 13 / 14 / 13T / 14T Pro", "keys": ["xiaomi_13", "xiaomi_14", "xiaomi 13", "xiaomi 14", "13t_pro", "14t_pro", "13t pro", "14t pro", "14t"], "max_buy": 22000, "market": 33000},
-    {"name": "Poco F6 / F7 / X6-X7 Pro / Note 13-14 Pro+", "keys": ["poco_f5", "poco_f6", "poco_f7", "poco f5", "poco f6", "poco f7", "poco x6 pro", "poco_x6_pro", "poco x7 pro", "poco_x7_pro", "note_13_pro", "note 13 pro", "note_14_pro", "note 14 pro"], "max_buy": 16500, "market": 25000},
-    {"name": "OnePlus 11 / 12 / Ace 3-5", "keys": ["oneplus_11", "oneplus_12", "oneplus 11", "oneplus 12", "ванплас", "oneplus ace"], "max_buy": 27000, "market": 40000},
-    {"name": "Google Pixel 9 / 10 Pro / XL", "keys": ["pixel_9", "pixel_10", "pixel 9", "pixel 10", "пиксель 9", "пиксель 10"], "max_buy": 40000, "market": 56000},
-    {"name": "Google Pixel 7 / 8 / Pro", "keys": ["pixel_7", "pixel_8", "pixel 7", "pixel 8", "гугл пиксель", "пиксель 7", "пиксель 8"], "max_buy": 24000, "market": 35000},
-    {"name": "Флагман Vivo X100/X200 / Honor Magic / Pura", "keys": ["vivo_x100", "vivo_x200", "vivo x100", "vivo x200", "magic_6", "magic_7", "magic 6", "magic 7", "pura_70", "pura 70", "realme_gt6", "realme gt 6", "nothing_phone_2", "nothing phone 2"], "max_buy": 35000, "market": 52000},
-    {"name": "Apple Watch Ultra 1 / 2 / 3", "keys": ["watch_ultra", "watch ultra", "вотч ультра"], "max_buy": 32000, "market": 46000},
-    {"name": "Apple Watch S8 / S9 / S10 / S11 / SE", "keys": ["apple_watch_8", "apple_watch_9", "apple_watch_10", "apple watch 8", "apple watch 9", "apple watch 10", "apple watch 11", "apple watch se", "apple_watch_se", "apple watch s8", "apple watch s9", "apple watch s10"], "max_buy": 12500, "market": 19500},
-    {"name": "iPad Pro / Air (M1/M2/M3/M4)", "keys": ["ipad_pro", "ipad_air", "ipad pro", "ipad air"], "max_buy": 26000, "market": 43000},
-    {"name": "iPad 11 (2025) / 9 / 10", "keys": ["ipad_11", "ipad 11", "айпад 11", "ipad 2025", "ipad_9", "ipad_10", "ipad 9", "ipad 10", "айпад 9", "айпад 10", "ipad 10.2", "ipad 10.9"], "max_buy": 18500, "market": 28000},
-    {"name": "Игровой ноутбук RTX 3060-4070", "keys": ["rtx_3060", "rtx_3070", "rtx_4060", "rtx_4070", "rtx 3060", "rtx 3070", "rtx 4060", "rtx 4070", "rtx_4050", "rtx 4050"], "max_buy": 48000, "market": 72000},
-    {"name": "Игровой ноутбук GTX / RTX 3050", "keys": ["rtx_3050", "rtx 3050", "gtx_1650", "gtx 1650", "gtx_1660", "gtx 1660"], "max_buy": 32000, "market": 46000},
-    {"name": "MacBook Air / Pro (M1/M2/M3/M4)", "keys": ["macbook_air", "macbook_pro", "macbook air", "macbook pro", "макбук", "macbook m1", "macbook m2", "macbook m3"], "max_buy": 42000, "market": 62000},
-    {"name": "PlayStation 5 Pro", "keys": ["ps5_pro", "ps5 pro", "playstation 5 pro", "пс5 про"], "max_buy": 48000, "market": 66000},
-    {"name": "PlayStation 5 (PS5 Slim / Fat)", "keys": ["playstation_5", "playstation 5", "ps5", "пс5", "плойка 5"], "max_buy": 32000, "market": 43000},
-    {"name": "PlayStation 4 Pro", "keys": ["ps4_pro", "ps4 pro", "playstation 4 pro", "пс4 про"], "max_buy": 17000, "market": 25000},
-    {"name": "PlayStation 4 Slim / Fat", "keys": ["playstation_4", "playstation 4", "ps4", "пс4", "плойка 4"], "max_buy": 12500, "market": 18500},
-    {"name": "Xbox Series X", "keys": ["series_x", "series x"], "max_buy": 30000, "market": 42000},
-    {"name": "Xbox Series S", "keys": ["series_s", "series s"], "max_buy": 17500, "market": 25000},
-    {"name": "Steam Deck / ROG Ally / Switch 2", "keys": ["steam_deck", "steam deck", "стим дек", "rog_ally", "rog ally", "switch_2", "switch 2", "свитч 2"], "max_buy": 28000, "market": 42000},
-    {"name": "Nintendo Switch OLED", "keys": ["switch_oled", "switch oled", "свитч олед"], "max_buy": 16000, "market": 23500},
-    {"name": "Nintendo Switch Lite / V2", "keys": ["nintendo_switch", "nintendo switch", "нинтендо свитч", "switch lite", "switch_lite"], "max_buy": 10500, "market": 15500},
+    {"name": "Геймпад DualSense / Xbox", "keys": ["dualsense", "дуалсенс", "геймпад ps5", "геймпад xbox", "джойстик ps5"], "max_buy": 3500, "market": 5300},
+    {"name": "iPhone 18 Pro / Max", "keys": ["18_pro", "18 pro", "18pro", "18_promax"], "max_buy": 90000, "market": 115000},
+    {"name": "iPhone 18 / Plus / Air", "keys": ["iphone_18", "iphone 18", "айфон 18"], "max_buy": 65000, "market": 85000},
+    {"name": "iPhone 17 Pro / Max", "keys": ["17_pro", "17 pro", "17pro", "17_promax"], "max_buy": 75000, "market": 95000},
+    {"name": "iPhone 17 / Air / Plus", "keys": ["iphone_17", "iphone 17", "айфон 17", "17_air", "17 air"], "max_buy": 52000, "market": 68000},
+    {"name": "iPhone 16 Pro / Max", "keys": ["16_pro", "16 pro", "16pro", "16_promax"], "max_buy": 62000, "market": 79000},
+    {"name": "iPhone 16 / Plus / 16e", "keys": ["iphone_16", "iphone 16", "айфон 16", "16_plus", "16e"], "max_buy": 42000, "market": 56000},
+    {"name": "iPhone 15 Pro / Max", "keys": ["15_pro", "15 pro", "15pro", "15_promax"], "max_buy": 48000, "market": 63000},
+    {"name": "iPhone 15 / Plus", "keys": ["iphone_15", "iphone 15", "айфон 15"], "max_buy": 35000, "market": 46000},
+    {"name": "iPhone 14 Pro / Max", "keys": ["14_pro", "14 pro", "14pro", "14_promax"], "max_buy": 38000, "market": 50000},
+    {"name": "iPhone 14 / Plus", "keys": ["iphone_14", "iphone 14", "айфон 14"], "max_buy": 27000, "market": 37000},
+    {"name": "iPhone 13 Pro / Max", "keys": ["13_pro", "13 pro", "13pro", "13_promax"], "max_buy": 29000, "market": 39000},
+    {"name": "iPhone 13 / Mini", "keys": ["iphone_13", "iphone 13", "айфон 13"], "max_buy": 21000, "market": 29000},
+    {"name": "iPhone 12 Pro / Max", "keys": ["12_pro", "12 pro", "12pro", "12_promax"], "max_buy": 19500, "market": 27000},
+    {"name": "iPhone 12 / Mini", "keys": ["iphone_12", "iphone 12", "айфон 12"], "max_buy": 14000, "market": 20000},
+    {"name": "iPhone 11 Pro / Max", "keys": ["11_pro", "11 pro", "11pro"], "max_buy": 13000, "market": 18500},
+    {"name": "iPhone 11", "keys": ["iphone_11", "iphone 11", "айфон 11"], "max_buy": 10500, "market": 15000},
+    {"name": "iPhone XS / XR / SE 2022", "keys": ["iphone_xr", "iphone xr", "айфон хр", "iphone_xs", "iphone xs", "iphone se 2022", "iphone_se_2022", "iphone se 3"], "max_buy": 8000, "market": 12000},
+    {"name": "Samsung S25 / S26 Ultra", "keys": ["s25_ultra", "s26_ultra", "s25 ultra", "s26 ultra"], "max_buy": 58000, "market": 78000},
+    {"name": "Samsung S25 / S26 / Fold 6-7", "keys": ["galaxy_s25", "galaxy_s26", "galaxy s25", "galaxy s26", "fold_6", "fold_7", "fold 6", "fold 7", "flip_6", "flip 6"], "max_buy": 40000, "market": 56000},
+    {"name": "Samsung S23 / S24 Ultra", "keys": ["s23_ultra", "s24_ultra", "s23 ultra", "s24 ultra"], "max_buy": 39000, "market": 55000},
+    {"name": "Samsung S23 / S24 / Fold 4-5 / Flip", "keys": ["galaxy_s23", "galaxy_s24", "galaxy s23", "galaxy s24", "z_fold", "z_flip", "z fold", "z flip", "s24 fe", "s23 fe"], "max_buy": 26000, "market": 38000},
+    {"name": "Samsung S21 / S22 / Ultra / FE", "keys": ["galaxy_s21", "galaxy_s22", "galaxy s21", "galaxy s22", "s21_fe", "s21 fe", "s22_ultra", "s22 ultra"], "max_buy": 17000, "market": 25000},
+    {"name": "OnePlus 15 / 14 / 13", "keys": ["oneplus_15", "oneplus_14", "oneplus_13", "oneplus 15", "oneplus 14", "oneplus 13", "ванплас 15", "ванплас 14", "ванплас 13"], "max_buy": 38000, "market": 52000},
+    {"name": "Xiaomi 15 / 16 / Ultra", "keys": ["xiaomi_15", "xiaomi_16", "xiaomi 15", "xiaomi 16", "14_ultra", "14 ultra", "15_ultra", "15 ultra"], "max_buy": 32000, "market": 46000},
+    {"name": "Xiaomi 13 / 14 / 13T / 14T Pro", "keys": ["xiaomi_13", "xiaomi_14", "xiaomi 13", "xiaomi 14", "13t_pro", "14t_pro", "13t pro", "14t pro", "14t"], "max_buy": 19000, "market": 28000},
+    {"name": "Poco F6 / F7 / X6-X7 Pro / Note 13-14 Pro+", "keys": ["poco_f5", "poco_f6", "poco_f7", "poco f5", "poco f6", "poco f7", "poco x6 pro", "poco_x6_pro", "poco x7 pro", "poco_x7_pro", "note_13_pro", "note 13 pro", "note_14_pro", "note 14 pro"], "max_buy": 14000, "market": 21000},
+    {"name": "OnePlus 11 / 12 / Ace 3-5", "keys": ["oneplus_11", "oneplus_12", "oneplus 11", "oneplus 12", "ванплас", "oneplus ace"], "max_buy": 23000, "market": 34000},
+    {"name": "Google Pixel 9 / 10 Pro / XL", "keys": ["pixel_9", "pixel_10", "pixel 9", "pixel 10", "пиксель 9", "пиксель 10"], "max_buy": 35000, "market": 48000},
+    {"name": "Google Pixel 7 / 8 / Pro", "keys": ["pixel_7", "pixel_8", "pixel 7", "pixel 8", "гугл пиксель", "пиксель 7", "пиксель 8"], "max_buy": 20000, "market": 30000},
+    {"name": "Флагман Vivo X100/X200 / Honor Magic / Pura", "keys": ["vivo_x100", "vivo_x200", "vivo x100", "vivo x200", "magic_6", "magic_7", "magic 6", "magic 7", "pura_70", "pura 70", "realme_gt6", "realme gt 6", "nothing_phone_2", "nothing phone 2"], "max_buy": 30000, "market": 44000},
+    {"name": "Apple Watch Ultra 1 / 2 / 3", "keys": ["watch_ultra", "watch ultra", "вотч ультра"], "max_buy": 28000, "market": 40000},
+    {"name": "Apple Watch S8 / S9 / S10 / S11 / SE", "keys": ["apple_watch_8", "apple_watch_9", "apple_watch_10", "apple watch 8", "apple watch 9", "apple watch 10", "apple watch 11", "apple watch se", "apple_watch_se", "apple watch s8", "apple watch s9", "apple watch s10"], "max_buy": 11000, "market": 16500},
+    {"name": "iPad Pro / Air (M1/M2/M3/M4)", "keys": ["ipad_pro", "ipad_air", "ipad pro", "ipad air"], "max_buy": 23000, "market": 37000},
+    {"name": "iPad 11 (2025) / 9 / 10", "keys": ["ipad_11", "ipad 11", "айпад 11", "ipad 2025", "ipad_9", "ipad_10", "ipad 9", "ipad 10", "айпад 9", "айпад 10", "ipad 10.2", "ipad 10.9"], "max_buy": 16000, "market": 24000},
+    {"name": "Игровой ноутбук RTX 3060-4070", "keys": ["rtx_3060", "rtx_3070", "rtx_4060", "rtx_4070", "rtx 3060", "rtx 3070", "rtx 4060", "rtx 4070", "rtx_4050", "rtx 4050"], "max_buy": 42000, "market": 62000},
+    {"name": "Игровой ноутбук GTX / RTX 3050", "keys": ["rtx_3050", "rtx 3050", "gtx_1650", "gtx 1650", "gtx_1660", "gtx 1660"], "max_buy": 28000, "market": 40000},
+    {"name": "MacBook Air / Pro (M1/M2/M3/M4)", "keys": ["macbook_air", "macbook_pro", "macbook air", "macbook pro", "макбук", "macbook m1", "macbook m2", "macbook m3"], "max_buy": 38000, "market": 55000},
+    {"name": "PlayStation 5 Pro", "keys": ["ps5_pro", "ps5 pro", "playstation 5 pro", "пс5 про"], "max_buy": 42000, "market": 58000},
+    {"name": "PlayStation 5 (PS5 Slim / Fat)", "keys": ["playstation_5", "playstation 5", "ps5", "пс5", "плойка 5"], "max_buy": 28000, "market": 38000},
+    {"name": "PlayStation 4 Pro", "keys": ["ps4_pro", "ps4 pro", "playstation 4 pro", "пс4 про"], "max_buy": 15000, "market": 22000},
+    {"name": "PlayStation 4 Slim / Fat", "keys": ["playstation_4", "playstation 4", "ps4", "пс4", "плойка 4"], "max_buy": 11000, "market": 16000},
+    {"name": "Xbox Series X", "keys": ["series_x", "series x"], "max_buy": 26000, "market": 37000},
+    {"name": "Xbox Series S", "keys": ["series_s", "series s"], "max_buy": 15000, "market": 22000},
+    {"name": "Steam Deck / ROG Ally / Switch 2", "keys": ["steam_deck", "steam deck", "стим дек", "rog_ally", "rog ally", "switch_2", "switch 2", "свитч 2"], "max_buy": 24000, "market": 36000},
+    {"name": "Nintendo Switch OLED", "keys": ["switch_oled", "switch oled", "свитч олед"], "max_buy": 14000, "market": 20000},
+    {"name": "Nintendo Switch Lite / V2", "keys": ["nintendo_switch", "nintendo switch", "нинтендо свитч", "switch lite", "switch_lite"], "max_buy": 9000, "market": 13500},
     {"name": "Робот-пылесос Xiaomi / Roborock", "keys": ["робот пылесос", "робот-пылесос", "robot_vacuum", "roborock", "роборок", "mijia", "mi robot", "dreame", "пылесос xiaomi", "пылесос сяоми"], "max_buy": 3000, "market": 6500},
-    {"name": "Телевизор Smart TV / 4K", "keys": ["телевизор", "televizor", "smart_tv", "smart tv", "смарт тв"], "max_buy": 10000, "market": 17000},
-    {"name": "Стайлер / Фен Dyson", "keys": ["dyson", "дайсон", "airwrap", "supersonic"], "max_buy": 14000, "market": 24000},
-    {"name": "Кофемашина DeLonghi / Philips", "keys": ["кофемашина", "kofemashina", "delonghi", "делонги", "philips ep"], "max_buy": 11000, "market": 20000},
-    {"name": "Видеокарта RTX 3060Ti / 3070 / 4060 / 4070", "keys": ["видеокарта rtx 3060", "видеокарта rtx 3070", "видеокарта rtx 4060", "видеокарта rtx 4070", "geforce rtx 3060", "geforce rtx 3070", "geforce rtx 4060"], "max_buy": 21000, "market": 31000},
-    {"name": "Видеокарта RTX 2060 / 3050 / 1660S / RX 6600", "keys": ["rtx_2060", "rtx 2060", "gtx_1660_super", "1660 super", "1660 ti", "rx_6600", "rx 6600"], "max_buy": 10500, "market": 16000},
-    {"name": "Игровой монитор 144Hz / 165Hz / 240Hz", "keys": ["144гц", "144hz", "165гц", "165hz", "240гц", "240hz", "игровой монитор", "igrovoy_monitor"], "max_buy": 8500, "market": 14500},
-    {"name": "Яндекс Станция Макс / Миди / 2 / Дуо", "keys": ["яндекс станция макс", "яндекс станция 2", "яндекс станция миди", "станция макс", "stantsiya_maks", "станция дуо"], "max_buy": 7500, "market": 13500},
-    {"name": "Экшн-камера GoPro 9-13 / DJI Osmo", "keys": ["gopro_9", "gopro_10", "gopro_11", "gopro_12", "gopro_13", "gopro 9", "gopro 10", "gopro 11", "gopro 12", "gopro 13", "osmo_action", "osmo pocket"], "max_buy": 14000, "market": 23000},
-    {"name": "Колонка JBL Charge / Xtreme / PartyBox", "keys": ["jbl_charge", "jbl charge", "jbl_xtreme", "jbl xtreme", "jbl_partybox", "jbl partybox"], "max_buy": 6500, "market": 11500},
+    {"name": "Телевизор Smart TV / 4K", "keys": ["телевизор", "televizor", "smart_tv", "smart tv", "смарт тв"], "max_buy": 9000, "market": 15000},
+    {"name": "Стайлер / Фен Dyson", "keys": ["dyson", "дайсон", "airwrap", "supersonic"], "max_buy": 12000, "market": 21000},
+    {"name": "Кофемашина DeLonghi / Philips", "keys": ["кофемашина", "kofemashina", "delonghi", "делонги", "philips ep"], "max_buy": 10000, "market": 18000},
+    {"name": "Видеокарта RTX 3060Ti / 3070 / 4060 / 4070", "keys": ["видеокарта rtx 3060", "видеокарта rtx 3070", "видеокарта rtx 4060", "видеокарта rtx 4070", "geforce rtx 3060", "geforce rtx 3070", "geforce rtx 4060"], "max_buy": 18000, "market": 27000},
+    {"name": "Видеокарта RTX 2060 / 3050 / 1660S / RX 6600", "keys": ["rtx_2060", "rtx 2060", "gtx_1660_super", "1660 super", "1660 ti", "rx_6600", "rx 6600"], "max_buy": 9500, "market": 14500},
+    {"name": "Игровой монитор 144Hz / 165Hz / 240Hz", "keys": ["144гц", "144hz", "165гц", "165hz", "240гц", "240hz", "игровой монитор", "igrovoy_monitor"], "max_buy": 7500, "market": 13000},
+    {"name": "Яндекс Станция Макс / Миди / 2 / Дуо", "keys": ["яндекс станция макс", "яндекс станция 2", "яндекс станция миди", "станция макс", "stantsiya_maks", "станция дуо"], "max_buy": 6500, "market": 12000},
+    {"name": "Экшн-камера GoPro 9-13 / DJI Osmo", "keys": ["gopro_9", "gopro_10", "gopro_11", "gopro_12", "gopro_13", "gopro 9", "gopro 10", "gopro 11", "gopro 12", "gopro 13", "osmo_action", "osmo pocket"], "max_buy": 12000, "market": 20000},
+    {"name": "Колонка JBL Charge / Xtreme / PartyBox", "keys": ["jbl_charge", "jbl charge", "jbl_xtreme", "jbl xtreme", "jbl_partybox", "jbl partybox"], "max_buy": 5500, "market": 10000},
 ]
 
 OTHER_CITIES = [
@@ -259,7 +259,7 @@ async def fetch_smart(url: str):
                         continue
 
                     state.current_ip = f"Порт {port_str}"
-                    state.last_activity_time = time.time()  # 🔥 Фиксируем активность!
+                    state.last_activity_time = time.time()
                     logging.info(f"📄 Успех на порту {port_str}! Найдено карточек Казани: {len(unique_links)}")
                     return clean_html, unique_links
                 else:
@@ -398,19 +398,18 @@ async def background_scanner(bot: Bot):
                 await asyncio.sleep(1)
         except Exception as e:
             state.last_error = str(e)[:120]
-            logging.error(f"⚠️ Ошибка в сканере: {e}")
+            logging.error(f"⚠️ Ошибка в фоновом сканере: {e}")
             await asyncio.sleep(10)
 
-# ================= 🛡️ СТОРОЖЕВОЙ ТАЙМЕР (САМОДИАГНОСТИКА) =================
+# ================= 🛡️ СТОРОЖЕВОЙ ТАЙМЕР =================
 async def watchdog_monitor(bot: Bot):
     while True:
-        await asyncio.sleep(60)  # Проверяем каждые 60 секунд
+        await asyncio.sleep(45)
         if not state.is_scanning:
             continue
         
-        # Если бот не подавал признаков активности дольше 3 минут (180 секунд)
-        if time.time() - state.last_activity_time > 180:
-            logging.warning("⚠️ СТОРОЖЕВОЙ ТАЙМЕР: Обнаружено зависание сканера! Провожу экстренный сброс...")
+        if time.time() - state.last_activity_time > 120:
+            logging.warning("⚠️ СТОРОЖЕВОЙ ТАЙМЕР: Замечено зависание потока! Экстренно сбрасываем прокси...")
             banned_proxies.clear()
             state.last_activity_time = time.time()
             state.target_idx = 0
@@ -419,7 +418,7 @@ async def watchdog_monitor(bot: Bot):
                 try:
                     await bot.send_message(
                         chat_id=state.active_chat_id,
-                        text="🛡️ <b>Самодиагностика:</b> Обнаружена задержка сканирования. Очистил прокси-пул и перезапустил цикл!",
+                        text="🛡️ <b>Самодиагностика:</b> Сбросил зависший прокси-поток и возобновил поиск!",
                         parse_mode="HTML"
                     )
                 except Exception:
@@ -442,7 +441,7 @@ async def cmd_start(message: types.Message):
     state.active_chat_id = message.chat.id
     state.is_scanning = True
     await message.answer(
-        f"🕵️ <b>Ультра-Снайпер 2026 запущен (Самодиагностика активна)!</b>\n"
+        f"🕵️ <b>Ультра-Снайпер 2026 запущен (Асинхронные кнопки + Самозащита)!</b>\n"
         f"Чат привязан: <code>{message.chat.id}</code> ✨",
         parse_mode="HTML",
         reply_markup=get_main_kb(),
@@ -453,7 +452,7 @@ async def start_scan(message: types.Message):
     state.active_chat_id = message.chat.id
     state.is_scanning = True
     await message.answer(
-        f"🕵️ <b>Сканирование активно!</b> Самодиагностика следит за стабильностью 24/7 ✨",
+        f"🕵️ <b>Сканирование активно!</b> Кнопки откликаются мгновенно ✨",
         parse_mode="HTML",
         reply_markup=get_main_kb(),
     )
@@ -469,14 +468,14 @@ async def test_send(message: types.Message):
     test_details = {
         "title": "Тестовый iPhone 16 Pro 256 ГБ (Проверка связи)",
         "image_url": None,
-        "description": "Самодиагностика работает! Карточка доставлена успешно.",
+        "description": "Кнопки работают мгновенно, рынок актуализирован!",
     }
-    test_rule = {"name": "iPhone 16 Pro / Max", "max_buy": 72000, "market": 92000}
+    test_rule = {"name": "iPhone 16 Pro / Max", "max_buy": 62000, "market": 79000}
     await send_deal_card(bot=message.bot, chat_id=message.chat.id, details=test_details, price_val=55000, matched_rule=test_rule, full_url="https://www.avito.ru/kazan/telefony")
 
 @dp.message(F.text.contains("Статистика"))
 async def show_stats(message: types.Message):
-    status = "🟢 Работает (Самозащита ON)" if state.is_scanning else "🔴 На паузе"
+    status = "🟢 Работает (Асинхронный режим)" if state.is_scanning else "🔴 На паузе"
     now = time.time()
     active_count = len([p for p in PROXY_LIST if p not in banned_proxies or banned_proxies[p] < now])
 
@@ -494,7 +493,7 @@ async def show_stats(message: types.Message):
 
 # ================= ВЕБ-СЕРВЕР ДЛЯ RENDER =================
 async def handle_ping(request):
-    return web.Response(text="Bot is running 24/7 with Self-Healing!")
+    return web.Response(text="Bot is running 24/7 with Async UI & Self-Healing!")
 
 async def web_server():
     app = web.Application()
@@ -509,8 +508,8 @@ async def web_server():
 async def on_startup(bot: Bot):
     init_db()
     asyncio.create_task(background_scanner(bot))
-    asyncio.create_task(watchdog_monitor(bot))  # 🔥 Запускаем сторожевой таймер!
-    logging.info("🛡️ Снайпер 2026 запущен с системой самодиагностики и самовосстановления!")
+    asyncio.create_task(watchdog_monitor(bot))
+    logging.info("🛡️ Снайпер 2026 запущен с асинхронными кнопками и сторожевым таймером!")
 
 async def main():
     session = AiohttpSession(timeout=60)
