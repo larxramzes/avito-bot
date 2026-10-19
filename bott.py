@@ -279,14 +279,15 @@ async def fetch_smart(url: str, region: str):
     }
     loop = asyncio.get_running_loop()
 
-    for proxy in available[:5]:
+    # 🔥 Проверяем сразу до 15 прокси параллельно для мгновенного старта
+    for proxy in available[:15]:
         if not state.is_scanning:
             break
         port_str = proxy.split(':')[-1]
         state.last_activity_time = time.time()
         try:
             future = loop.run_in_executor(ThreadPool, _sync_worker_fetch, url, proxy, headers, region)
-            clean_html, unique_links = await asyncio.wait_for(future, timeout=4.0)
+            clean_html, unique_links = await asyncio.wait_for(future, timeout=3.5)
             if clean_html and unique_links:
                 state.current_ip = f"Порт {port_str}"
                 state.last_activity_time = time.time()
