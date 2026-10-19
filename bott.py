@@ -8,7 +8,7 @@ import sqlite3
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime  # 🔥 ИСПРАВЛЕНО: теперь datetime на месте!
+from datetime import datetime
 
 from aiohttp import web
 from curl_cffi.requests import AsyncSession
@@ -28,7 +28,6 @@ BOT_TOKEN = "8968394996:AAEpGiADwUoqHZ1KqCA1MllKhFOXOF6OA10"
 DB_PATH = "safe_items.db"
 PORT = int(os.environ.get("PORT", 10000))
 
-# По умолчанию сразу прописан твой ID чата, чтобы бот знал куда слать даже после рестарта Render!
 DEFAULT_CHAT_ID = 1128246797
 
 PROXY_LIST = [f"http://W3KAbVZ7rM:ruTTPneIyG@proxy.proxyma.io:{p}" for p in range(10000, 11000)]
@@ -307,7 +306,17 @@ async def parse_electronics(bot: Bot):
     state.target_idx += 1
 
     logging.info(f"🕵️ Сканируем категорию: {cat_name}...")
-    clean_html, unique_links = await fetch_smart(url)
+    
+    # 🔥 Защита от зависания: таймаут 20 секунд на категорию
+    try:
+        clean_html, unique_links = await asyncio.wait_for(fetch_smart(url), timeout=20.0)
+    except asyncio.TimeoutError:
+        logging.warning(f"⏰ Таймаут сканирования '{cat_name}', прокси завис, идем дальше...")
+        return
+    except Exception as e:
+        state.last_error = f"Fetch error: {e}"[:120]
+        return
+
     if not clean_html or not unique_links:
         logging.warning(f"❌ Не удалось пробить категорию '{cat_name}' в этом проходе, переключаемся...")
         return
