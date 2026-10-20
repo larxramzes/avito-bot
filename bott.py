@@ -101,11 +101,22 @@ def init_db():
     cur.execute("SELECT COUNT(*) FROM price_rules")
     if cur.fetchone()[0] == 0:
         default_rules = [
-            ("Геймпад DualSense / Xbox", "dualsense,дуалсенс,геймпад ps5,геймпад xbox", 3500, 5300),
-            ("iPhone 16 Pro / Max", "16_pro,16 pro,16pro,16_promax", 62000, 79000),
-            ("iPhone 15 Pro / Max", "15_pro,15 pro,15pro,15_promax", 48000, 63000),
-            ("iPhone 14 Pro / Max", "14_pro,14 pro,14pro,14_promax", 38000, 50000),
-            ("PlayStation 5 (Slim / Fat)", "playstation_5,playstation 5,ps5,пс5", 28000, 38000),
+            ("Meta Quest 3 / 3S", "quest 3,quest3,meta quest 3,окулус 3,quest 3s", 35000, 48000),
+            ("Oculus / Meta Quest 2", "quest 2,quest2,meta quest 2,окулус 2,oculus quest 2", 16000, 23000),
+            ("Ноутбуки", "ноутбук,laptop,macbook,asus tuf,acer nitro,lenovo legion,msi", 50000, 75000),
+            ("Кофеварки и кофемашины", "кофемашина,кофеварка,delonghi,delonghi ec,nivona,krups,capsule", 15000, 25000),
+            ("Топовые планшеты (iPad Pro/Air, Tab S)", "ipad pro, айпад про, ipad air, tab s9, tab s10, xiaomi pad pro", 45000, 65000),
+            ("OnePlus 15", "oneplus 15,oneplus15,онплас 15", 55000, 75000),
+            ("PlayStation 5 (Slim / Fat)", "playstation_5,playstation 5,ps5,пс5", 50000, 65000),
+            ("Робот-пылесос Xiaomi", "робот пылесос xiaomi,robot vacuum xiaomi,сяоми пылесос", 3000, 8000),
+            ("Телевизоры", "телевизор,tv,smart tv,смарт тв", 10000, 20000),
+            ("iPad 11 (2025)", "ipad 11, айпад 11, ipad 2025", 32000, 45000),
+            ("iPhone 18 Pro / Max", "18_pro,18 pro,18pro,18_promax", 75000, 95000),
+            ("iPhone 17 Pro / Max / Air", "17_pro,17 pro,17pro,17_promax,17_air,iphone air", 65000, 85000),
+            ("iPhone 16 Pro / Max", "16_pro,16 pro,16pro,16_promax", 55000, 75000),
+            ("iPhone 15 Pro / Max", "15_pro,15 pro,15pro,15_promax", 45000, 62000),
+            ("Samsung Galaxy S25 / S26 Ultra", "s25_ultra,s25 ultra,s26_ultra,s26 ultra", 60000, 80000),
+            ("Xiaomi Ultra Flagship", "xiaomi 14 ultra,xiaomi 15 ultra,xiaomi 16 ultra", 55000, 75000),
             ("Steam Deck / ROG Ally", "steam_deck,steam deck,стим дек,rog_ally", 24000, 36000),
             ("Стайлер / Фен Dyson", "dyson,дайсон,airwrap,supersonic", 12000, 21000),
             ("Видеокарта RTX 3060 / 4060", "rtx_3060,rtx_4060,rtx 3060,rtx 4060", 18000, 27000),
@@ -219,7 +230,6 @@ def normalize_html(raw_html: str) -> str:
 
 def extract_links_from_html(clean_html: str, region: str) -> list:
     links = []
-    # Гибкий паттерн для извлечения ID и путей объявлений
     pattern = re.compile(rf"/(?:{region})/([a-z0-9_-]+)/([a-z0-9_-]+?_(\d{{8,12}}))", re.IGNORECASE)
     for m in pattern.finditer(clean_html):
         cat_path = m.group(1).lower()
@@ -384,7 +394,7 @@ async def parse_electronics(bot: Bot):
             continue
 
         matched_rule = next((r for r in price_rules if any(k in combined for k in r["keys"])), None)
-        if not matched_rule or price_val < (matched_rule["max_buy"] * 0.3) or price_val < 1200:
+        if not matched_rule or price_val < (matched_rule["max_buy"] * 0.3) or price_val < 500:
             mark_seen(ad_id)
             continue
 
@@ -399,7 +409,6 @@ async def parse_electronics(bot: Bot):
                     state.stats_found += 1
 
 async def background_scanner(bot: Bot):
-    # 🔥 Делаем мгновенный первый тестовый запрос при старте
     try:
         await parse_electronics(bot)
     except Exception:
@@ -621,12 +630,12 @@ async def api_test_card(request):
     global global_bot_instance
     if global_bot_instance and state.active_chat_id:
         dummy_details = {
-            "title": "🧪 Тестовый iPhone 16 Pro Max 256GB (Идеальное состояние)",
-            "image_url": "https://www.avito.st/s/v1/widget/iphone.jpg",
+            "title": "🧪 Тестовые очки Meta Quest 3 128GB (Идеальное состояние)",
+            "image_url": "https://www.avito.st/s/v1/widget/quest3.jpg",
             "description": "Это тестовая карточка для проверки отправки сообщений, ссылок и ИИ-аналитики в вашем снайпере «24 сервер»!"
         }
-        dummy_rule = {"name": "Смартфоны", "market": 85000}
-        await send_deal_card(global_bot_instance, state.active_chat_id, dummy_details, 59000, dummy_rule, "https://www.avito.ru/kazan")
+        dummy_rule = {"name": "Meta Quest 3 / 3S", "market": 48000}
+        await send_deal_card(global_bot_instance, state.active_chat_id, dummy_details, 31000, dummy_rule, "https://www.avito.ru/kazan")
         return web.json_response({"status": "ok"})
     return web.json_response({"status": "error"}, status=400)
 
