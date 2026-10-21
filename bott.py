@@ -292,4 +292,4 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 EOF
-python main_bot.py
+python bott.py
