@@ -1,803 +1,295 @@
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
-import html as html_lib
-import json
-import logging
-import os
-import random
-import re
 import sqlite3
-import sys
-import threading
-import time
-from dataclasses import dataclass
-from datetime import datetime
-
+import re
+import random
+import os
 from aiohttp import web
 from curl_cffi import requests as cffi_requests
-from aiogram import Bot, Dispatcher, F, types
+from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import (
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    KeyboardButton,
-    ReplyKeyboardMarkup,
-    WebAppInfo,
-)
-from aiogram.client.default import DefaultBotProperties
-from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, BotCommand, BotCommandScopeDefault
+from aiogram.exceptions import TelegramNetworkError
 
-# ================= НАСТРОЙКИ =================
-BOT_TOKEN = "8968394996:AAEpGiADwUoqHZ1KqCA1MllKhFOXOF6OA10"
-DB_PATH = "safe_items.db"
-PORT = int(os.environ.get("PORT", 10000))
-WEBAPP_URL = os.environ.get("WEBAPP_URL", "https://avito-bot-2-3iwt.onrender.com/webapp")
+TOKEN = "8968394996:AAEpGiADwUoqHZ1KqCA1MllKhFOXOF6OA10"
 
-DEFAULT_CHAT_ID = 1128246797
+bot = Bot(token=TOKEN)
+dp = Dispatcher()
 
-# 🔥 Пул из 100 прокси (10000 - 10099)
-PROXY_LIST = [f"http://W3KAbVZ7rM:ruTTPneIyG@proxy.proxyma.io:{p}" for p in range(10000, 10100)]
-banned_proxies = {}
+active_chat_id = 1128246797
+is_scanning = True
+total_scanned = 0
+deals_found = 0
 
-ThreadPool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="AvitoWorker")
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    stream=sys.stdout,
-    force=True,
-)
-
-@dataclass
-class ScannerState:
-    active_chat_id: int | None = DEFAULT_CHAT_ID
-    is_scanning: bool = True
-    stats_checked: int = 0
-    stats_found: int = 0
-    current_ip: str = "Инициализация..."
-    target_idx: int = 0
-    last_error: str = "Нет ошибок"
-    last_activity_time: float = time.time()
-    current_region: str = "kazan"
-
-state = ScannerState()
-
-# ================= 🗄️ БАЗА ДАННЫХ =================
 def init_db():
-    conn = sqlite3.connect(DB_PATH, timeout=10.0)
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("CREATE TABLE IF NOT EXISTS seen_ads (ad_id TEXT PRIMARY KEY)")
-    
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS price_rules (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE,
-            keys TEXT,
-            max_buy INTEGER,
-            market INTEGER
-        )
-    """)
-    
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS settings (
-            key TEXT PRIMARY KEY,
-            value TEXT
-        )
-    """)
-    
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS recent_findings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT,
-            price INTEGER,
-            market INTEGER,
-            url TEXT,
-            category TEXT,
-            time TEXT
-        )
-    """)
-
-    cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) FROM price_rules")
-    if cur.fetchone()[0] == 0:
-        default_rules = [
-            ("Meta Quest 3 / 3S", "quest 3,quest3,meta quest 3,окулус 3,quest 3s", 35000, 48000),
-            ("Oculus / Meta Quest 2", "quest 2,quest2,meta quest 2,окулус 2,oculus quest 2", 16000, 23000),
-            ("Ноутбуки", "ноутбук,laptop,macbook,asus tuf,acer nitro,lenovo legion,msi", 50000, 75000),
-            ("Кофеварки и кофемашины", "кофемашина,кофеварка,delonghi,delonghi ec,nivona,krups,capsule", 15000, 25000),
-            ("Топовые планшеты (iPad Pro/Air, Tab S)", "ipad pro, айпад про, ipad air, tab s9, tab s10, xiaomi pad pro", 45000, 65000),
-            ("OnePlus 15", "oneplus 15,oneplus15,онплас 15", 55000, 75000),
-            ("PlayStation 5 (Slim / Fat)", "playstation_5,playstation 5,ps5,пс5", 50000, 65000),
-            ("Робот-пылесос Xiaomi", "робот пылесос xiaomi,robot vacuum xiaomi,сяоми пылесос", 3000, 8000),
-            ("Телевизоры", "телевизор,tv,smart tv,смарт тв", 10000, 20000),
-            ("iPad 11 (2025)", "ipad 11, айпад 11, ipad 2025", 32000, 45000),
-            ("iPhone 18 Pro / Max", "18_pro,18 pro,18pro,18_promax", 75000, 95000),
-            ("iPhone 17 Pro / Max / Air", "17_pro,17 pro,17pro,17_promax,17_air,iphone air", 65000, 85000),
-            ("iPhone 16 Pro / Max", "16_pro,16 pro,16pro,16_promax", 55000, 75000),
-            ("iPhone 15 Pro / Max", "15_pro,15 pro,15pro,15_promax", 45000, 62000),
-            ("Samsung Galaxy S25 / S26 Ultra", "s25_ultra,s25 ultra,s26_ultra,s26 ultra", 60000, 80000),
-            ("Xiaomi Ultra Flagship", "xiaomi 14 ultra,xiaomi 15 ultra,xiaomi 16 ultra", 55000, 75000),
-            ("Steam Deck / ROG Ally", "steam_deck,steam deck,стим дек,rog_ally", 24000, 36000),
-            ("Стайлер / Фен Dyson", "dyson,дайсон,airwrap,supersonic", 12000, 21000),
-            ("Видеокарта RTX 3060 / 4060", "rtx_3060,rtx_4060,rtx 3060,rtx 4060", 18000, 27000),
-        ]
-        cur.executemany("INSERT OR IGNORE INTO price_rules (name, keys, max_buy, market) VALUES (?, ?, ?, ?)", default_rules)
-        conn.commit()
-
-    cur.execute("SELECT COUNT(*) FROM settings WHERE key='stop_words'")
-    if cur.fetchone()[0] == 0:
-        cur.execute("INSERT INTO settings (key, value) VALUES ('stop_words', 'чехол,стекло,кабель,аренда,скупка,копия,реплика,ремонт,запчасти,обмен')")
-        conn.commit()
-
+    conn = sqlite3.connect("safe_items.db")
+    cursor = conn.cursor()
+    cursor.execute("CREATE TABLE IF NOT EXISTS seen_ads (id TEXT PRIMARY KEY)")
+    conn.commit()
     conn.close()
 
-def get_price_rules() -> list:
-    try:
-        conn = sqlite3.connect(DB_PATH, timeout=5.0)
-        cur = conn.cursor()
-        cur.execute("SELECT name, keys, max_buy, market FROM price_rules")
-        rows = cur.fetchall()
-        conn.close()
-        return [{"name": r[0], "keys": [k.strip() for k in r[1].split(",")], "max_buy": r[2], "market": r[3]} for r in rows]
-    except Exception:
-        return []
+init_db()
 
-def get_stop_words() -> list:
-    try:
-        conn = sqlite3.connect(DB_PATH, timeout=5.0)
-        cur = conn.cursor()
-        cur.execute("SELECT value FROM settings WHERE key='stop_words'")
-        row = cur.fetchone()
-        conn.close()
-        return [w.strip().lower() for w in row[0].split(",")] if row else []
-    except Exception:
-        return []
-
-def is_seen(ad_id: str) -> bool:
-    try:
-        conn = sqlite3.connect(DB_PATH, timeout=5.0)
-        cur = conn.cursor()
-        cur.execute("SELECT 1 FROM seen_ads WHERE ad_id = ?", (ad_id,))
-        row = cur.fetchone()
-        conn.close()
-        return row is not None
-    except Exception:
-        return False
-
-def mark_seen(ad_id: str, title: str = "", price: int = 0, market: int = 0, url: str = "", category: str = ""):
-    try:
-        conn = sqlite3.connect(DB_PATH, timeout=5.0)
-        conn.execute("INSERT OR IGNORE INTO seen_ads (ad_id) VALUES (?)", (ad_id,))
-        if title:
-            now_str = datetime.now().strftime("%H:%M:%S")
-            conn.execute(
-                "INSERT INTO recent_findings (title, price, market, url, category, time) VALUES (?, ?, ?, ?, ?, ?)",
-                (title, price, market, url, category, now_str)
-            )
-            conn.execute("DELETE FROM recent_findings WHERE id NOT IN (SELECT id FROM recent_findings ORDER BY id DESC LIMIT 30)")
-        conn.commit()
-        conn.close()
-    except Exception:
-        pass
-
-# ================= 🤖 ИИ-АНАЛИТИК СДЕЛКИ =================
-def generate_ai_analytics(title: str, price: int, market: int, category: str) -> str:
-    profit = market - price
-    roi = int((profit / price) * 100) if price > 0 else 0
-    
-    if roi >= 40:
-        verdict = "🔥 АБСОЛЮТНЫЙ ТОП (Сверхдоходный лот)"
-        speed = "Уйдет за 1-3 часа. Хватай не раздумывая!"
-    elif roi >= 25:
-        verdict = "⚡️ ОТЛИЧНАЯ СДЕЛКА (Высокая маржа)"
-        speed = "Уйдет за 1-2 дня при качественных фото."
-    else:
-        verdict = "💡 УМЕРЕННЫЙ ПРОФИТ (Торг обязателен)"
-        speed = "Требует торга с продавцом для увеличения маржи."
-
-    return (
-        f"🤖 <b>AI-Аналитика & Рекомендации:</b>\n"
-        f"• Вердикт: <b>{verdict}</b>\n"
-        f"• Чистая прибыль: <b>+{profit:,} ₽ (ROI: {roi}%)</b>\n"
-        f"• Прогнозируемая скорость перепродажи: {speed}\n\n"
-        f"💬 <b>Совет по торгу:</b> Предложи наличные при встрече за быстрый выкуп со скидкой."
-    ).replace(",", " ")
-
-# ================= КАТЕГОРИИ И ФИЛЬТРЫ =================
-TARGETS = {
-    "kazan": [
-        ("Телефоны", "https://m.avito.ru/kazan/telefony?s=104"),
-        ("Приставки и игры", "https://m.avito.ru/kazan/igry_pristavki_i_programmy?s=104"),
-        ("Ноутбуки", "https://m.avito.ru/kazan/noutbuki?s=104"),
-        ("Планшеты", "https://m.avito.ru/kazan/planshety_i_elektronnye_knigi?s=104"),
-        ("Аудио и видео", "https://m.avito.ru/kazan/audio_i_video?s=104"),
-        ("Бытовая техника", "https://m.avito.ru/kazan/bytovaya_tehnika?s=104"),
-        ("Товары для ПК", "https://m.avito.ru/kazan/tovary_dlya_kompyutera?s=104"),
+main_menu_keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="📊 Статистика снайпера"), KeyboardButton(text="💡 Помощь")],
+        [KeyboardButton(text="🛑 Остановить сканер"), KeyboardButton(text="🚀 Запустить сканер")]
     ],
-    "innopolis": [
-        ("Телефоны", "https://m.avito.ru/innopolis/telefony?s=104"),
-        ("Приставки и игры", "https://m.avito.ru/innopolis/igry_pristavki_i_programmy?s=104"),
-    ]
-}
+    resize_keyboard=True
+)
 
-OTHER_CITIES = ["калининград", "тагил", "симферополь", "доставка из", "москва", "спб", "екатеринбург", "краснодар", "самара", "уфа", "нижний новгород", "пермь"]
-SCAM_WORDS = ["предоплата", "icloud", "заблокирован", "мдм", "mdm", "рсим", "r-sim", "нет фейс", "разбит", "трещина", "на запчасти", "выгорание", "демо", "demo", "не включается"]
-
-def normalize_html(raw_html: str) -> str:
-    text = html_lib.unescape(raw_html)
-    text = text.replace("\\u002F", "/").replace("\\u002f", "/").replace("%2F", "/").replace("%2f", "/").replace("\\/", "/").replace('\\"', '"')
-    return text
-
-def extract_links_from_html(clean_html: str, region: str) -> list:
-    links = []
-    pattern = re.compile(rf"/(?:{region})/([a-z0-9_-]+)/([a-z0-9_-]+?_(\d{{8,12}}))", re.IGNORECASE)
-    for m in pattern.finditer(clean_html):
-        cat_path = m.group(1).lower()
-        raw_slug = m.group(2)
-        ad_id = m.group(3)
-        if cat_path in ("prof", "favorites", "login", "search", "user", "immovables", "avito"):
-            continue
-        links.append((cat_path, raw_slug, ad_id, m.start()))
-
-    seen_ids = set()
-    unique_links = []
-    for cat_path, raw_slug, ad_id, pos in links:
-        if ad_id not in seen_ids:
-            seen_ids.add(ad_id)
-            unique_links.append((cat_path, raw_slug, ad_id, pos))
-    return unique_links
-
-def extract_card_details(raw_window: str, slug: str) -> dict:
-    img_match = re.search(r'(https?://\d+\.img\.avito\.st/image/1/[A-Za-z0-9_\-\./]+)', raw_window)
-    image_url = img_match.group(1) if img_match else None
-
-    title_match = re.search(r'"title"\s*:\s*"([^"]{4,90})"', raw_window)
-    if not title_match:
-        title_match = re.search(r'title="([^"]{4,90})"', raw_window)
-    title = html_lib.unescape(title_match.group(1)).strip() if title_match else re.sub(r'_\d{8,12}$', '', slug).replace('_', ' ').title()
-
-    desc_match = re.search(r'"description"\s*:\s*"([^"]{10,450})"', raw_window)
-    desc = html_lib.unescape(desc_match.group(1)).replace("\\n", " ").strip() if desc_match else "Свежее объявление в регионе."
-    return {"title": title, "image_url": image_url, "description": desc[:300]}
-
-# ================= 🔥 МНОГОПОТОЧНОЕ ЯДРО ЗАПРОСОВ =================
-USER_AGENTS = [
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148",
-    "Mozilla/5.0 (Linux; Android 13; SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+PRICE_RULES = [
+    (["iphone_18", "18_pro", "18_promax"], "iPhone 18 Серия", 75000, 110000),
+    (["iphone_17", "17_pro", "17_promax"], "iPhone 17 Серия", 65000, 95000),
+    (["iphone_16", "16_pro", "16_promax", "16_plus"], "iPhone 16 Серия", 55000, 85000),
+    (["iphone_15", "15_pro", "15_promax", "15_plus"], "iPhone 15 Серия", 42000, 72000),
+    (["iphone_14", "14_pro", "14_promax", "14_plus"], "iPhone 14 Серия", 30000, 55000),
+    (["iphone_13", "13_pro", "13_promax", "13_mini"], "iPhone 13 Серия", 22000, 40000),
+    (["iphone_12", "12_pro", "12_promax", "12_mini"], "iPhone 12 Серия", 16000, 30000),
+    (["iphone_11", "11_pro", "11_promax"], "iPhone 11 Серия", 12000, 22000),
+    (["s26", "galaxy_s26", "ultra_26"], "Samsung Galaxy S26 Ultra", 65000, 95000),
+    (["s25", "galaxy_s25", "ultra_25"], "Samsung Galaxy S25 Серия", 52000, 80000),
+    (["s24", "s23", "s22", "s21", "ultra", "fold", "flip"], "Samsung Galaxy Флагман", 30000, 65000),
+    (["oneplus"], "OnePlus Flagship", 40000, 70000),
+    (["ipad"], "iPad / Pro / Air", 25000, 42000),
+    (["rtx"], "Игровой ноутбук RTX", 40000, 65000),
+    (["macbook"], "MacBook", 38000, 70000),
+    (["dualsense", "геймпад"], "Геймпад PS5", 4000, 5800),
+    (["пылесос", "xiaomi"], "Робот-пылесос Xiaomi", 3000, 7500),
+    (["телевизор"], "Телевизор (Ремонт)", 8000, 15000),
+    (["ps5", "playstation_5"], "PlayStation 5", 30000, 41000)
 ]
 
-def _sync_worker_fetch(url: str, proxy: str, region: str):
-    headers = {
-        "User-Agent": random.choice(USER_AGENTS),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "ru-RU,ru;q=0.9",
-        "Cache-Control": "no-cache",
-    }
-    try:
-        resp = cffi_requests.get(url, headers=headers, proxies={"http": proxy, "https": proxy}, impersonate="chrome", timeout=(3.0, 4.0))
-        if resp.status_code == 200 and len(resp.text) > 8000:
-            clean_html = normalize_html(resp.text)
-            unique_links = extract_links_from_html(clean_html, region)
-            if unique_links:
-                return clean_html, unique_links, 200
-        return None, [], resp.status_code
-    except Exception:
-        return None, [], 500
+TARGETS = [
+    ("📱 Смартфоны и Флагманы", "https://m.avito.ru/kazan/telefony?q=iphone+samsung+oneplus&s=104", "telefony"),
+    ("💻 Ноутбуки", "https://m.avito.ru/kazan/noutbuki?q=rtx+macbook+gaming&s=104", "noutbuki"),
+    ("🍏 Планшеты", "https://m.avito.ru/kazan/planshety_i_elektronnye_knigi?q=ipad+pro+air&s=104", "planshety_i_elektronnye_knigi"),
+    ("🎮 Приставки", "https://m.avito.ru/kazan/igry_pristavki_i_programmy?q=ps5+xbox+dualsense&s=104", "igry_pristavki_i_programmy")
+]
 
-async def fetch_smart(url: str, region: str):
-    now = time.time()
-    available = [p for p in PROXY_LIST if p not in banned_proxies or banned_proxies[p] < now]
-    if not available:
-        banned_proxies.clear()
-        available = PROXY_LIST.copy()
+current_target_idx = 0
+TRASH_WORDS = ["чехол", "стекло", "кабель", "зарядка", "коробка", "аренда", "прокат", "скупка", "выкуп", "копия", "реплика", "муляж"]
 
-    random.shuffle(available)
-    loop = asyncio.get_running_loop()
-
-    for proxy in available[:10]:
-        if not state.is_scanning:
-            break
-        port_str = proxy.split(':')[-1]
-        state.last_activity_time = time.time()
-        try:
-            future = loop.run_in_executor(ThreadPool, _sync_worker_fetch, url, proxy, region)
-            clean_html, unique_links, status = await asyncio.wait_for(future, timeout=5.0)
-            
-            if clean_html and unique_links:
-                state.current_ip = f"Порт {port_str}"
-                state.last_activity_time = time.time()
-                return clean_html, unique_links
-            elif status in (403, 429, 999):
-                banned_proxies[proxy] = now + 600
-        except Exception:
-            banned_proxies[proxy] = now + 300
-    return None, []
-
-async def send_deal_card(bot: Bot, chat_id: int, details: dict, price_val: int, matched_rule: dict, full_url: str) -> bool:
-    profit = matched_rule["market"] - price_val
-    now_str = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+def evaluate_deal(text_lower, price_val):
+    if price_val < 1000:
+        return None
     
-    ai_text = generate_ai_analytics(details['title'], price_val, matched_rule['market'], matched_rule['name'])
+    if "пылесос" in text_lower and price_val <= 3000:
+        return {"tag": "🤖 <b>РОБОТ-ПЫЛЕСОС XIAOMI ДО 3 000 ₽!</b>", "market": "~7 000 ₽", "profit": "+4 000 ₽ 💰"}
+    
+    if "телевизор" in text_lower and price_val <= 8000:
+        return {"tag": "📺 <b>ТЕЛЕВИЗОР ДО 8 000 ₽ (РЕМОНТ)</b>", "market": "~17 000 ₽", "profit": "+9 000 ₽ 💰"}
 
-    caption = (
-        f"<b>{html_lib.escape(details['title'])}</b>\n"
-        f"💵 <b>{price_val:,} ₽</b>  <i>(Рынок: ~{matched_rule['market']:,} ₽ | 🔥 +{profit:,} ₽)</i>\n"
-        f"🌍 Регион: {state.current_region}\n\n"
-        f"<blockquote>{html_lib.escape(details['description'])}</blockquote>\n\n"
-        f"{ai_text}\n\n"
-        f"🔗 <a href=\"{full_url}\">Прямая ссылка на Авито</a>\n"
-        f"📅 {now_str}"
-    ).replace(",", " ")
+    for keywords, model_name, max_buy, market_price in PRICE_RULES:
+        if any(kw in text_lower for kw in keywords):
+            if price_val <= max_buy:
+                profit = market_price - price_val
+                return {
+                    "tag": f"🔥 <b>ТОП-СДЕЛКА ({model_name})</b>",
+                    "market": f"~{market_price:,} ₽".replace(",", " "),
+                    "profit": f"+{profit:,} ₽ 💰".replace(",", " ")
+                }
+            return None
+    return None
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⭐ В избранное / CRM", callback_data=f"crm_{price_val}")], [InlineKeyboardButton(text="🚀 Открыть на Авито", url=full_url)]])
+def fetch_avito(cat_name, target_url, cat_path):
+    global total_scanned
+    ads = []
     try:
-        if details.get("image_url"):
-            await bot.send_photo(chat_id=chat_id, photo=details["image_url"], caption=caption, parse_mode="HTML", reply_markup=kb)
-        else:
-            await bot.send_message(chat_id=chat_id, text=caption, parse_mode="HTML", reply_markup=kb)
-        return True
-    except Exception:
-        try:
-            await bot.send_message(chat_id=chat_id, text=caption, parse_mode="HTML", reply_markup=kb, disable_web_page_preview=False)
-            return True
-        except Exception:
-            return False
+        session = cffi_requests.Session(impersonate="chrome120")
+        headers = {
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Referer": "https://m.avito.ru/kazan",
+            "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+            "Sec-Ch-Ua-Mobile": "?1",
+            "Sec-Ch-Ua-Platform": '"iOS"'
+        }
+        resp = session.get(target_url, headers=headers, timeout=30)
+        print(f"📥 Скан [{cat_name}] | Статус: {resp.status_code} | Размер: {len(resp.text)} байт")
 
-async def parse_electronics(bot: Bot):
-    targets_list = TARGETS.get(state.current_region, TARGETS["kazan"])
-    cat_name, url = targets_list[state.target_idx % len(targets_list)]
-    state.target_idx += 1
-    state.last_activity_time = time.time()
+        if resp.status_code != 200:
+            return []
 
-    clean_html, unique_links = await fetch_smart(url, state.current_region)
-    if not clean_html or not unique_links:
-        return
+        html = resp.text
+        ad_ids = re.findall(r'_(\d{8,10})\b', html)
+        unique_ids = list(set(ad_ids))
+        print(f"✅ Найдено ID товаров: {len(unique_ids)}")
 
-    price_rules = get_price_rules()
-    stop_words = get_stop_words()
+        for ad_id in unique_ids:
+            total_scanned += 1
+            pos = html.find(ad_id)
+            if pos == -1:
+                continue
+                
+            snippet = html[max(0, pos - 400):pos + 600]
+            snippet_lower = snippet.lower()
+            
+            m_slug = re.search(r'([a-zA-Zа-яА-Я0-9_-]+?_' + ad_id + ')', snippet)
+            slug = m_slug.group(1).lower() if m_slug else f"item_{ad_id}"
+            title = slug.replace("_", " ").upper()
+            
+            full_url = f"https://m.avito.ru/kazan/{cat_path}/{slug}"
 
-    for cat_path, raw_slug, ad_id, pos in unique_links:
-        state.last_activity_time = time.time()
-        slug = re.sub(r"^(2f|_)+", "", raw_slug, flags=re.IGNORECASE)
-
-        if is_seen(ad_id):
-            continue
-
-        state.stats_checked += 1
-
-        narrow = clean_html[max(0, pos - 350) : pos + 550]
-        combined = f"{slug.lower()} {narrow.lower()}"
-
-        if any(c in combined for c in OTHER_CITIES) or any(s in combined for s in SCAM_WORDS) or any(sw in combined for sw in stop_words):
-            mark_seen(ad_id)
-            continue
-
-        price_val = None
-        for pp in [
-            r'"priceDetailed"\s*:\s*\{\s*"value"\s*:\s*(\d{3,7})',
-            r'itemprop="price"[^>]*content="(\d{3,7})"',
-            r'"price"\s*:\s*(\d{3,7})',
-            r'(\d{1,3}(?:[\s\xa0\u202f]\d{3})+)\s*₽',
-        ]:
-            pm = re.search(pp, narrow)
-            if pm:
-                digits = re.sub(r"\D", "", pm.group(1))
-                if digits:
-                    val = int(digits)
-                    if 1000 <= val <= 350000:
-                        price_val = val
-                        break
-
-        if not price_val:
-            continue
-
-        matched_rule = next((r for r in price_rules if any(k in combined for k in r["keys"])), None)
-        if not matched_rule or price_val < (matched_rule["max_buy"] * 0.3) or price_val < 500:
-            mark_seen(ad_id)
-            continue
-
-        if price_val <= matched_rule["max_buy"]:
-            details = extract_card_details(narrow, slug)
-            full_url = f"https://www.avito.ru/{state.current_region}/{cat_path}/{slug}"
-            mark_seen(ad_id, title=details['title'], price=price_val, market=matched_rule['market'], url=full_url, category=matched_rule['name'])
-
-            if state.active_chat_id:
-                sent_ok = await send_deal_card(bot, state.active_chat_id, details, price_val, matched_rule, full_url)
-                if sent_ok:
-                    state.stats_found += 1
-
-async def background_scanner(bot: Bot):
-    try:
-        await parse_electronics(bot)
-    except Exception:
-        pass
-
-    while True:
-        try:
-            if not state.is_scanning or not state.active_chat_id:
-                state.last_activity_time = time.time()
-                await asyncio.sleep(1)
+            if any(w in slug or w in snippet_lower for w in TRASH_WORDS):
                 continue
 
-            state.last_activity_time = time.time()
-            await parse_electronics(bot)
+            price_val = 0
+            p_match = re.search(r'(?:"price"\s*:\s*(\d{3,7})|(\d[\d\s\xa0]{2,7})\s*[₽рp])', snippet)
+            if p_match:
+                raw_str = p_match.group(1) or p_match.group(2)
+                raw_p = re.sub(r'\D', '', raw_str)
+                if raw_p:
+                    price_val = int(raw_p)
 
-            pause_sec = random.randint(20, 35)
-            for _ in range(pause_sec):
-                state.last_activity_time = time.time()
-                if not state.is_scanning or not state.active_chat_id:
-                    break
-                await asyncio.sleep(1)
-        except Exception:
-            await asyncio.sleep(5)
+            if price_val > 0:
+                verdict = evaluate_deal(snippet_lower, price_val)
+                if not verdict:
+                    continue
+                price_display = f"{price_val:,} ₽".replace(",", " ")
+            else:
+                continue
 
-def hardware_kernel_watchdog():
-    while True:
-        time.sleep(15)
-        if not state.is_scanning:
-            state.last_activity_time = time.time()
-            continue
-        if time.time() - state.last_activity_time > 120:
-            os._exit(1)
-
-# ================= 🌐 WEB-СЕРВЕР И MINI APP =================
-async def handle_webapp(request):
-    html_content = """
-    <!DOCTYPE html>
-    <html lang="ru">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Управление Снайпером 24</title>
-        <script src="https://telegram.org/js/telegram-web-app.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-        <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: var(--tg-theme-bg-color, #121212); color: var(--tg-theme-text-color, #ffffff); margin: 0; padding: 15px; }
-            h2, h3 { text-align: center; color: var(--tg-theme-button-color, #2ea6ff); }
-            .card { background: var(--tg-theme-secondary-bg-color, #1e1e1e); border-radius: 12px; padding: 12px; margin-bottom: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); }
-            input, select, button { width: 100%; padding: 10px; margin-top: 6px; border-radius: 8px; border: none; font-size: 14px; box-sizing: border-box; }
-            input, select { background: #2a2a2a; color: #fff; }
-            button { background: var(--tg-theme-button-color, #2ea6ff); color: var(--tg-theme-button-text-color, #fff); font-weight: bold; cursor: pointer; }
-            .btn-danger { background: #ff4d4d !important; }
-            .btn-test { background: #4caf50 !important; margin-top: 8px; }
-            .row { display: flex; gap: 8px; }
-            .finding-item { border-bottom: 1px solid #333; padding: 8px 0; font-size: 12px; }
-        </style>
-    </head>
-    <body>
-        <h2>⚡️ Снайпер 24 — Control Center</h2>
-
-        <div class="card">
-            <h3>🎛 Управление ядром</h3>
-            <div class="row">
-                <button onclick="toggleScan(true)">▶️ Запустить</button>
-                <button class="btn-danger" onclick="toggleScan(false)">⏹ Стоп</button>
-            </div>
-            <button class="btn-test" onclick="sendTestCard()">🧪 Тест: прислать тестовую карточку</button>
-            <button style="background:#ff9800; margin-top:8px;" onclick="restartKernel()">🔄 Перезагрузить движок</button>
-            <p>Статус: <span id="scanStatus" style="font-weight:bold; color:#4caf50;">Активен</span></p>
-        </div>
-
-        <div class="card">
-            <h3>🌍 Выбор региона</h3>
-            <select id="regionSelect" onchange="changeRegion()">
-                <option value="kazan">Казань</option>
-                <option value="innopolis">Иннополис</option>
-            </select>
-        </div>
-
-        <div class="card">
-            <h3>📊 Статистика</h3>
-            <p>Проверено лотов: <span id="checked">0</span></p>
-            <p>Найдено выгодных: <span id="found">0</span></p>
-        </div>
-
-        <div class="card">
-            <h3>🧮 Калькулятор маржинальности</h3>
-            <input type="number" id="calcBuy" placeholder="Цена покупки (₽)" oninput="calcProfit()">
-            <input type="number" id="calcMarket" placeholder="Рыночная цена (₽)" oninput="calcProfit()">
-            <p style="margin-top:8px; font-weight:bold; text-align:center;" id="calcResult">Чистая прибыль: 0 ₽</p>
-        </div>
-
-        <div class="card">
-            <h3>🎯 Добавить / Обновить товар</h3>
-            <input type="text" id="name" placeholder="Название товара">
-            <input type="text" id="keys" placeholder="Ключевые слова через запятую">
-            <div class="row">
-                <input type="number" id="max_buy" placeholder="Макс. цена">
-                <input type="number" id="market" placeholder="Рынок">
-            </div>
-            <button onclick="saveRule()">💾 Сохранить в базу</button>
-        </div>
-
-        <div class="card">
-            <h3>🚫 Черный список (Стоп-слова)</h3>
-            <input type="text" id="stopwords" placeholder="Стоп-слова через запятую">
-            <button onclick="saveStopWords()">💾 Сохранить стоп-слова</button>
-        </div>
-
-        <div class="card">
-            <h3>⚡️ Живой лог последних находок</h3>
-            <div id="findingsList">Загрузка...</div>
-        </div>
-
-        <div class="card">
-            <h3>📥 Отчеты</h3>
-            <button style="background:#4caf50;" onclick="exportCSV()">📥 Скачать отчет по находкам (CSV)</button>
-        </div>
-
-        <script>
-            let tg = window.Telegram.WebApp;
-            tg.expand();
-
-            async function loadData() {
-                let res = await fetch('/api/stats');
-                let data = await res.json();
-                document.getElementById('checked').innerText = data.checked;
-                document.getElementById('found').innerText = data.found;
-                document.getElementById('scanStatus').innerText = data.is_scanning ? "Активен 🟢" : "Остановлен 🔴";
-
-                let fRes = await fetch('/api/findings');
-                let findings = await fRes.json();
-                let fHtml = '';
-                findings.forEach(f => {
-                    fHtml += `<div class="finding-item"><b>${f.title}</b><br>💵 ${f.price}₽ (Рынок: ${f.market}₽) | ⏱ ${f.time}</div>`;
-                });
-                document.getElementById('findingsList').innerHTML = fHtml || 'Пока нет находок в сессии.';
-            }
-
-            async function toggleScan(status) {
-                await fetch('/api/toggle?status=' + status);
-                loadData();
-            }
-
-            async function sendTestCard() {
-                let res = await fetch('/api/test_card');
-                if(res.ok) { alert('Тестовая карточка успешно отправлена в чат!'); }
-                else { alert('Ошибка отправки теста.'); }
-            }
-
-            async function restartKernel() {
-                if(confirm('Перезагрузить ядро бота?')) {
-                    await fetch('/api/restart');
-                    alert('Команда на перезапуск отправлена!');
-                }
-            }
-
-            async function changeRegion() {
-                let reg = document.getElementById('regionSelect').value;
-                await fetch('/api/region?val=' + reg);
-            }
-
-            async function saveRule() {
-                let body = {
-                    name: document.getElementById('name').value,
-                    keys: document.getElementById('keys').value,
-                    max_buy: parseInt(document.getElementById('max_buy').value),
-                    market: parseInt(document.getElementById('market').value)
-                };
-                let res = await fetch('/api/rules', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
-                if(res.ok) { alert('Правило сохранено!'); }
-            }
-
-            async function saveStopWords() {
-                let sw = document.getElementById('stopwords').value;
-                await fetch('/api/stopwords', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({words: sw}) });
-                alert('Стоп-слова обновлены!');
-            }
-
-            function calcProfit() {
-                let buy = parseInt(document.getElementById('calcBuy').value) || 0;
-                let market = parseInt(document.getElementById('calcMarket').value) || 0;
-                let prof = market - buy;
-                let roi = buy > 0 ? Math.round((prof / buy) * 100) : 0;
-                document.getElementById('calcResult').innerText = `Чистая прибыль: ${prof.toLocaleString()} ₽ (ROI: ${roi}%)`;
-            }
-
-            function exportCSV() {
-                window.location.href = '/api/export';
-            }
-
-            loadData();
-            setInterval(loadData, 4000);
-        </script>
-    </body>
-    </html>
-    """
-    return web.Response(text=html_content, content_type="text/html")
-
-async def api_stats(request):
-    return web.json_response({
-        "checked": state.stats_checked,
-        "found": state.stats_found,
-        "is_scanning": state.is_scanning
-    })
-
-async def api_toggle(request):
-    status = request.query.get("status")
-    state.is_scanning = (status == "true")
-    return web.json_response({"status": "ok"})
-
-async def api_region(request):
-    val = request.query.get("val")
-    if val in TARGETS:
-        state.current_region = val
-    return web.json_response({"status": "ok"})
-
-async def api_test_card(request):
-    global global_bot_instance
-    if global_bot_instance and state.active_chat_id:
-        dummy_details = {
-            "title": "🧪 Тестовые очки Meta Quest 3 128GB (Идеальное состояние)",
-            "image_url": "https://www.avito.st/s/v1/widget/quest3.jpg",
-            "description": "Это тестовая карточка для проверки отправки сообщений, ссылок и ИИ-аналитики в вашем снайпере «24 сервер»!"
-        }
-        dummy_rule = {"name": "Meta Quest 3 / 3S", "market": 48000}
-        await send_deal_card(global_bot_instance, state.active_chat_id, dummy_details, 31000, dummy_rule, "https://www.avito.ru/kazan")
-        return web.json_response({"status": "ok"})
-    return web.json_response({"status": "error"}, status=400)
-
-async def api_restart(request):
-    os._exit(1)
-
-async def api_findings(request):
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cur = conn.cursor()
-        cur.execute("SELECT title, price, market, time FROM recent_findings ORDER BY id DESC LIMIT 10")
-        rows = cur.fetchall()
-        conn.close()
-        return web.json_response([{"title": r[0], "price": r[1], "market": r[2], "time": r[3]} for r in rows])
-    except Exception:
-        return web.json_response([])
-
-async def api_rules_post(request):
-    try:
-        data = await request.json()
-        conn = sqlite3.connect(DB_PATH)
-        conn.execute(
-            "INSERT INTO price_rules (name, keys, max_buy, market) VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(name) DO UPDATE SET keys=excluded.keys, max_buy=excluded.max_buy, market=excluded.market",
-            (data["name"], data["keys"], data["max_buy"], data["market"])
-        )
-        conn.commit()
-        conn.close()
-        return web.json_response({"status": "ok"})
+            ads.append({
+                "id": ad_id,
+                "category": cat_name,
+                "title": title if len(title) > 5 else f"Лот #{ad_id}",
+                "price": price_display,
+                "tag": verdict["tag"],
+                "market": verdict["market"],
+                "profit": verdict["profit"],
+                "url": full_url
+            })
+            if len(ads) >= 5:
+                break
     except Exception as e:
-        return web.json_response({"error": str(e)}, status=400)
+        print(f"⚠️ Ошибка сети: {e}")
+    return ads
 
-async def api_stopwords(request):
-    try:
-        data = await request.json()
-        conn = sqlite3.connect(DB_PATH)
-        conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('stop_words', ?)", (data["words"],))
-        conn.commit()
-        conn.close()
-        return web.json_response({"status": "ok"})
-    except Exception as e:
-        return web.json_response({"error": str(e)}, status=400)
-
-async def api_export(request):
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cur = conn.cursor()
-        cur.execute("SELECT title, price, market, category, time FROM recent_findings")
-        rows = cur.fetchall()
-        conn.close()
-        csv_data = "Title,Price,Market,Category,Time\n"
-        for r in rows:
-            csv_data += f'"{r[0]}",{r[1]},{r[2]},"{r[3]}","{r[4]}"\n'
-        return web.Response(text=csv_data, content_type="text/csv")
-    except Exception:
-        return web.Response(text="Error", status=500)
+async def background_scanner():
+    global active_chat_id, is_scanning, current_target_idx, deals_found, total_scanned
+    print("🚀 Золотой Каскадный Снайпер запущен!")
+    while is_scanning:
+        if active_chat_id:
+            try:
+                cat_name, url, cat_path = TARGETS[current_target_idx]
+                current_target_idx = (current_target_idx + 1) % len(TARGETS)
+                
+                ads = await asyncio.to_thread(fetch_avito, cat_name, url, cat_path)
+                if ads:
+                    conn = sqlite3.connect("safe_items.db")
+                    cursor = conn.cursor()
+                    for ad in ads:
+                        cursor.execute("SELECT id FROM seen_ads WHERE id = ?", (ad["id"],))
+                        if not cursor.fetchone():
+                            cursor.execute("INSERT INTO seen_ads (id) VALUES (?)", (ad["id"],))
+                            conn.commit()
+                            deals_found += 1
+                            print(f"💎 Найдена годнота: {ad['title']} за {ad['price']}")
+                            
+                            kb = InlineKeyboardMarkup(
+                                inline_keyboard=[[InlineKeyboardButton(text="🚀 Забрать лот на Авито", url=ad["url"])]]
+                            )
+                            caption = (
+                                f"┏ {ad['tag']}\n"
+                                f"┣ 📂 Категория: <b>{ad['category']}</b>\n"
+                                f"┗━━━━━━━━━━━━━━━━━━━\n\n"
+                                f"📦 <b>{ad['title']}</b>\n\n"
+                                f"💵 <b>Цена:</b> <code>{ad['price']}</code>\n"
+                                f"📊 <b>Рынок:</b> {ad['market']}\n"
+                                f"📈 <b>Профит:</b> <b>{ad['profit']}</b>\n\n"
+                                f"📉 <i>Проверено: {total_scanned} | Находок: {deals_found}</i>\n"
+                                f"🔗 <a href='{ad['url']}'>Ссылка на объявление</a>"
+                            )
+                            try:
+                                await bot.send_message(active_chat_id, caption, parse_mode="HTML", reply_markup=kb)
+                                await asyncio.sleep(1)
+                            except Exception:
+                                pass
+                    conn.close()
+            except Exception as e:
+                print(f"⚠️ Ошибка цикла: {e}")
+        wait_t = random.randint(50, 75)
+        print(f"⏳ Безопасная пауза каскада {wait_t} сек... (Просмотрено: {total_scanned})")
+        await asyncio.sleep(wait_t)
 
 async def handle_ping(request):
-    return web.Response(text="Bot is running 24/7 with Ultimate Mini App & AI Analyst!")
+    return web.Response(text="Bot is running and sniping 24/7!")
 
-# ================= ХЕНДЛЕРЫ TELEGRAM =================
-dp = Dispatcher()
-global_bot_instance = None
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", handle_ping)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 10000))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"🌐 Веб-сервер запущен на порту {port}")
 
-def get_main_kb():
-    webapp_button = InlineKeyboardButton(text="⚙️ Управление & AI (Mini App)", web_app=WebAppInfo(url=WEBAPP_URL))
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="▶️ Запустить сканер"), KeyboardButton(text="⏹ Остановить сканер")],
-            [KeyboardButton(text="📊 Статистика")],
-        ],
-        resize_keyboard=True,
-    ), InlineKeyboardMarkup(inline_keyboard=[[webapp_button]])
+async def set_bot_commands():
+    commands = [
+        BotCommand(command="start", description="🚀 Запустить"),
+        BotCommand(command="stats", description="📊 Статистика"),
+        BotCommand(command="help", description="💡 Помощь"),
+        BotCommand(command="stop", description="🛑 Пауза")
+    ]
+    await bot.set_my_commands(commands, scope=BotCommandScopeDefault())
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    state.active_chat_id = message.chat.id
-    state.is_scanning = True
-    kb_reply, kb_inline = get_main_kb()
-    await message.answer(
-        f"🕵️ <b>Ультра-Снайпер 24 (Ultimate Edition)!</b>\n"
-        f"Встроена AI-аналитика рынка и полнофункциональный Mini App ✨",
-        parse_mode="HTML",
-        reply_markup=kb_inline,
-    )
-    await message.answer("Главное меню:", reply_markup=kb_reply)
+    global active_chat_id, is_scanning
+    active_chat_id = message.chat.id
+    is_scanning = True
+    await message.answer("💎 <b>Снайпер запущен!</b> Мониторинг в облаке активен.", parse_mode="HTML", reply_markup=main_menu_keyboard)
 
-@dp.callback_query(F.data.startswith("crm_"))
-async def crm_callback(callback: types.CallbackQuery):
-    await callback.answer("⭐ Товар успешно добавлен в ваш трекер сделок (CRM)!")
+@dp.message(lambda message: message.text == "📊 Статистика снайпера")
+async def btn_stats_text(message: types.Message):
+    await message.answer(f"📊 <b>Статистика:</b>\nПросмотрено: <code>{total_scanned}</code>\nНайдено: <code>{deals_found}</code>", parse_mode="HTML", reply_markup=main_menu_keyboard)
 
-@dp.message(F.text.contains("Запустить"))
-async def start_scan(message: types.Message):
-    state.active_chat_id = message.chat.id
-    state.is_scanning = True
-    await message.answer("🕵️ <b>Сканирование активно!</b>", parse_mode="HTML")
+@dp.message(lambda message: message.text == "💡 Помощь")
+async def btn_help_text(message: types.Message):
+    await message.answer("💡 Бот круглосуточно сканирует Авито в Казани.", parse_mode="HTML", reply_markup=main_menu_keyboard)
 
-@dp.message(F.text.contains("Остановить"))
-async def stop_scan(message: types.Message):
-    state.is_scanning = False
-    await message.answer("⏸ <b>Сканер остановлен.</b> 🌸", parse_mode="HTML")
+@dp.message(lambda message: message.text == "🛑 Остановить сканер")
+async def btn_stop_text(message: types.Message):
+    global active_chat_id, is_scanning
+    is_scanning = False
+    active_chat_id = None
+    await message.answer("🛑 Пауза.", parse_mode="HTML", reply_markup=main_menu_keyboard)
 
-@dp.message(F.text.contains("Статистика"))
-async def show_stats(message: types.Message):
-    status = "🟢 Работает" if state.is_scanning else "🔴 На паузе"
-    text = (
-        f"📊 <b>Статистика Снайпера 24:</b>\n\n"
-        f"Статус: <b>{status}</b>\n"
-        f"💬 Чат: <code>{state.active_chat_id}</code>\n"
-        f"🌐 Порт: <code>{state.current_ip}</code>\n"
-        f"🌍 Регион: <code>{state.current_region}</code>\n"
-        f"🔍 Проверено: <b>{state.stats_checked}</b>\n"
-        f"🔥 Выгодных: <b>{state.stats_found}</b>"
-    )
-    _, kb_inline = get_main_kb()
-    await message.answer(text, parse_mode="HTML", reply_markup=kb_inline)
+@dp.message(lambda message: message.text == "🚀 Запустить сканер")
+async def btn_start_text(message: types.Message):
+    global active_chat_id, is_scanning
+    active_chat_id = message.chat.id
+    is_scanning = True
+    await message.answer("🚀 Погнали дальше!", parse_mode="HTML", reply_markup=main_menu_keyboard)
 
-# ================= ЗАПУСК СИСТЕМЫ =================
+@dp.message(Command("stats"))
+async def cmd_stats(message: types.Message):
+    await btn_stats_text(message)
+
+@dp.message(Command("help"))
+async def cmd_help(message: types.Message):
+    await cmd_help(message)
+
+@dp.message(Command("stop"))
+async def cmd_stop(message: types.Message):
+    global active_chat_id, is_scanning
+    is_scanning = False
+    active_chat_id = None
+
 async def main():
-    global global_bot_instance
-    init_db()
+    await set_bot_commands()
+    await start_web_server()
+    asyncio.create_task(background_scanner())
     
-    wd_thread = threading.Thread(target=hardware_kernel_watchdog, daemon=True, name="HardwareWatchdog")
-    wd_thread.start()
-
-    session = AiohttpSession(timeout=30)
-    bot = Bot(token=BOT_TOKEN, session=session, default=DefaultBotProperties(parse_mode="HTML"))
-    global_bot_instance = bot
-
-    try:
-        await bot.delete_webhook(drop_pending_updates=True)
-    except Exception:
-        pass
-
-    app = web.Application()
-    app.router.add_get("/", handle_ping)
-    app.router.add_get("/webapp", handle_webapp)
-    app.router.add_get("/api/stats", api_stats)
-    app.router.add_get("/api/toggle", api_toggle)
-    app.router.add_get("/api/region", api_region)
-    app.router.add_get("/api/test_card", api_test_card)
-    app.router.add_get("/api/restart", api_restart)
-    app.router.add_get("/api/findings", api_findings)
-    app.router.add_post("/api/rules", api_rules_post)
-    app.router.add_post("/api/stopwords", api_stopwords)
-    app.router.add_get("/api/export", api_export)
-
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", PORT)
-    await site.start()
-    logging.info(f"🌐 Веб-сервер и Ultimate Mini App успешно запущены на порту {PORT}")
-
-    asyncio.create_task(background_scanner(bot))
-    logging.info("🛡️ Снайпер 24 Ultimate с ИИ-аналитиком запущен!")
-
     while True:
         try:
-            logging.info("🚀 Запуск Telegram Polling...")
-            await dp.start_polling(bot, handle_signals=False)
+            await dp.start_polling(bot)
+        except TelegramNetworkError:
+            print("⚠️ Обрыв связи с Telegram, переподключение через 5 секунд...")
+            await asyncio.sleep(5)
         except Exception as e:
-            logging.error(f"⚠️ Ошибка связи с Telegram: {e}. Переподключение через 5 секунд...")
+            print(f"⚠️ Ошибка поллинга: {e}")
             await asyncio.sleep(5)
 
 if __name__ == "__main__":
